@@ -1,0 +1,88 @@
+services:
+  mysql:
+    image: mysql:8.4.10
+    container_name: rag-mysql
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: rag_root_dev_2026
+      MYSQL_DATABASE: rag
+      MYSQL_USER: rag
+      MYSQL_PASSWORD: rag_mysql_dev_2026
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h localhost -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - rag-net
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.17
+    container_name: rag-elasticsearch
+    restart: unless-stopped
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+      TZ: Asia/Shanghai
+    mem_limit: 2g
+    volumes:
+      - ./data/elasticsearch:/usr/share/elasticsearch/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl --fail --silent http://localhost:9200/_cluster/health > /dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    networks:
+      - rag-net
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: rag-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: rag_minio_dev_2026
+      TZ: Asia/Shanghai
+    command:
+      - server
+      - /data
+      - --console-address
+      - ":9001"
+    volumes:
+      - ./data/minio:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl --fail --silent http://localhost:9000/minio/health/live > /dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - rag-net
+
+networks:
+  rag-net:
+    name: rag-net
+    driver: bridge

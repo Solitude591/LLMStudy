@@ -2,9 +2,22 @@ spring:
   application:
     name: rag-module
 
+  datasource:
+    # createDatabaseIfNotExist=true 会在数据库不存在时自动创建（账号需要有 CREATE 权限）
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:rag}?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:rag}
+    password: ${MYSQL_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  sql:
+    init:
+      # 每次启动都检查 schema.sql；其中使用 IF NOT EXISTS，不会覆盖已有表和数据
+      mode: always
+      schema-locations: classpath:schema.sql
+
   ai:
     openai:
-      api-key: ${OPENAI_API_KEY}
+      api-key: ${DEEPSEEK_API_KEY}
       base-url: ${OPENAI_BASE_URL:https://api.deepseek.com}
       chat:
         model: ${CHAT_MODEL:deepseek-v4-flash}
@@ -22,6 +35,19 @@ minio:
   access-key: ${MINIO_ACCESS_KEY}
   secret-key: ${MINIO_SECRET_KEY}
   bucket-name: ${MINIO_BUCKET_NAME:rag}
+
+vision:
+  api-url: ${VISION_API_URL:}
+  api-key: ${VISION_API_KEY:}
+  model: ${VISION_MODEL:}
+  timeout-seconds: ${VISION_TIMEOUT_SECONDS:60}
+  max-tokens: ${VISION_MAX_TOKENS:300}
+  temperature: ${VISION_TEMPERATURE:0.2}
+  concurrency: ${VISION_CONCURRENCY:4}
+  max-retries: ${VISION_MAX_RETRIES:2}
+
+mineru:
+  token: ${MINERU_TOKEN}
 
 logging:
   level:

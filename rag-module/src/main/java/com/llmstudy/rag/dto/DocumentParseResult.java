@@ -50,8 +50,13 @@ public class DocumentParseResult {
 
     public static class ImageResource {
 
+        /** 图片在 MinerU ZIP 中的规范化相对路径，用于和 Markdown 引用建立对应关系。 */
         private final String path;
+
+        /** 图片解压后的原始二进制数据，后续直接上传到 MinIO 或传给视觉模型。 */
         private final byte[] data;
+
+        /** 根据文件扩展名识别出的 MIME 类型，用于 MinIO Content-Type 和视觉模型 data URL。 */
         private final String contentType;
 
         public ImageResource(String path, byte[] data, String contentType) {

@@ -66,6 +66,7 @@ public class VisionClient {
      * @return key 为图片路径，value 为描述；生成失败的图片不会出现在结果中
      */
     public Map<String, String> describeAll(Map<String, DocumentParseResult.ImageResource> images) {
+        // 未完整配置视觉接口时直接降级，不让可选能力阻塞文档主解析流程。
         if (!isEnabled()) {
             log.info("视觉模型未配置，跳过图片描述生成（将使用 PDF 原文图注）");
             return Map.of();
@@ -74,20 +75,24 @@ public class VisionClient {
             return Map.of();
         }
 
+        // 并发数至少为 1，且不超过实际图片数，避免创建无意义的空闲线程。
         int concurrency = Math.max(1, Math.min(properties.getConcurrency(), images.size()));
         Map<String, String> descriptions = new LinkedHashMap<>();
         long startMs = System.currentTimeMillis();
 
+        // 使用本次批处理独立的固定线程池，限制同时发往模型服务的请求数量。
         ExecutorService executor = Executors.newFixedThreadPool(concurrency);
         try {
             Map<String, Future<String>> futures = new LinkedHashMap<>();
             for (Map.Entry<String, DocumentParseResult.ImageResource> entry : images.entrySet()) {
+                // 每张图片独立提交任务，单张失败只影响自身，不取消其他图片的处理。
                 Callable<String> task = () -> describeWithRetry(entry.getValue());
                 futures.put(entry.getKey(), executor.submit(task));
             }
 
             for (Map.Entry<String, Future<String>> entry : futures.entrySet()) {
                 try {
+                    // 按原图片顺序收集结果，使返回映射和输入顺序保持一致，便于日志与排查。
                     String description = entry.getValue().get();
                     if (description != null && !description.isBlank()) {
                         descriptions.put(entry.getKey(), description);
@@ -112,6 +117,7 @@ public class VisionClient {
      */
     private String describeWithRetry(DocumentParseResult.ImageResource image) {
         RuntimeException lastError = null;
+        // maxRetries 表示首次失败后的额外重试次数，因此总尝试次数需要加 1。
         int attempts = Math.max(1, properties.getMaxRetries() + 1);
 
         for (int attempt = 1; attempt <= attempts; attempt++) {
@@ -133,6 +139,7 @@ public class VisionClient {
      * 调用视觉模型生成单张图片的描述。
      */
     private String describe(DocumentParseResult.ImageResource image) {
+        // 将二进制图片内联为 data URL，模型服务无需能够访问 MinIO 或项目所在内网。
         String dataUrl = "data:" + image.getContentType() + ";base64,"
                 + Base64.getEncoder().encodeToString(image.getData());
 
@@ -154,6 +161,7 @@ public class VisionClient {
                         + ", body=" + truncate(response.body()));
             }
 
+            // 按 OpenAI-compatible 响应格式读取 choices[0].message.content。
             JsonNode root = objectMapper.readTree(response.body());
             JsonNode content = root.path("choices").path(0).path("message").path("content");
             if (content.isMissingNode() || content.isNull()) {

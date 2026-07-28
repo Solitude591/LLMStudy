@@ -17,10 +17,12 @@ public class DocumentParserRouter {
     private final Map<String, DocumentParserStrategy> strategies;
 
     public DocumentParserRouter(List<DocumentParserStrategy> parserStrategies) {
+        // Spring 会注入所有策略实现；启动时将其展开为“扩展名 → 策略”的只读路由表。
         Map<String, DocumentParserStrategy> routingTable = new LinkedHashMap<>();
         for (DocumentParserStrategy strategy : parserStrategies) {
             for (String fileType : strategy.supportedFileTypes()) {
                 String normalizedType = normalize(fileType);
+                // 同一扩展名只能由一个策略处理，冲突时直接阻止应用启动，避免运行时随机路由。
                 DocumentParserStrategy existing = routingTable.putIfAbsent(normalizedType, strategy);
                 if (existing != null) {
                     throw new IllegalStateException(
@@ -34,11 +36,13 @@ public class DocumentParserRouter {
     }
 
     public DocumentParseResult parse(DocumentParseContext context) {
+        // 数据库存储的扩展名仍统一规范化，以兼容历史数据中可能存在的点号或大小写差异。
         String fileType = normalize(context.document().getFileType());
         DocumentParserStrategy strategy = strategies.get(fileType);
         if (strategy == null) {
             throw new IllegalArgumentException("暂不支持解析该文件类型: ." + fileType);
         }
+        // 不在路由层处理格式细节，所有策略最终都转换成统一的 DocumentParseResult。
         return strategy.parse(context);
     }
 

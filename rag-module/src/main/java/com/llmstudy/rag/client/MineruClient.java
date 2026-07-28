@@ -68,8 +68,11 @@ public class MineruClient {
      * @return 包含 markdown、content_list 和图片的完整产物
      */
     public DocumentParseResult parse(String fileUrl) {
+        // MinerU 使用异步任务模型：提交接口只返回任务 ID，不能直接得到解析内容。
         String taskId = submitTask(fileUrl);
+        // 持续查询任务状态，直到服务端生成可下载的完整产物 ZIP。
         MineruTaskResultResponse result = waitForResult(taskId);
+        // 最后将厂商 ZIP 转换为项目内部统一的 Markdown、结构元素和图片资源。
         return downloadArtifacts(result.getFullZipUrl());
     }
 
@@ -78,7 +81,9 @@ public class MineruClient {
      * 提交解析任务，返回 task_id。
      */
     public String submitTask(String fileUrl) {
+        // 先规范化 URL，确保中文、空格等字符不会导致 MinerU 的 URL 校验失败。
         String normalizedFileUrl = normalizeFileUrl(fileUrl);
+        // 请求体只包含文件地址和模型版本；文件本身由 MinerU 从 MinIO 地址拉取。
         String body = """
                 {"url": "%s", "model_version": "%s"}
                 """.formatted(escapeJson(normalizedFileUrl), properties.getModelVersion());
@@ -86,6 +91,7 @@ public class MineruClient {
         log.info("提交 MinerU 解析任务: url={}, model={}",
                 normalizedFileUrl, properties.getModelVersion());
 
+        // Token 通过 Bearer 认证传递，单次提交设置独立超时，避免网络异常永久占用请求线程。
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(properties.getApiUrl()))
                 .timeout(Duration.ofMinutes(2))
@@ -98,11 +104,13 @@ public class MineruClient {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             log.info("MinerU 任务提交响应: status={}", response.statusCode());
 
+            // 先检查 HTTP 层，再反序列化业务响应，避免把网关错误页当作 JSON 解析。
             requireSuccessStatus(response.statusCode(), response.body(), "任务提交");
 
             MineruTaskSubmitResponse result = objectMapper.readValue(
                     response.body(), MineruTaskSubmitResponse.class);
 
+            // HTTP 200 不代表任务一定创建成功，还必须检查业务 code 和 task_id。
             if (!result.isSuccess() || result.getData() == null
                     || result.getData().getTaskId() == null
                     || result.getData().getTaskId().isBlank()) {
@@ -125,6 +133,7 @@ public class MineruClient {
      */
     public MineruTaskResultResponse waitForResult(String taskId) {
         String pollUrl = properties.getApiUrl() + "/" + taskId;
+        // 由最大等待时间和轮询间隔换算尝试次数，使总等待时间可通过配置控制。
         int maxAttempts = properties.getMaxWaitSeconds() / properties.getPollIntervalSeconds();
 
         boolean firstCheck = true;
@@ -136,6 +145,7 @@ public class MineruClient {
             }
             firstCheck = false;
 
+            // 每轮都创建新的 GET 请求，避免复用已经消费过的 HttpRequest 响应体。
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(pollUrl))
                     .timeout(Duration.ofSeconds(30))
@@ -153,6 +163,7 @@ public class MineruClient {
                 }
                 requireSuccessStatus(response.statusCode(), response.body(), "任务查询");
 
+                // 将厂商响应转换为带状态判断方法的 DTO，调用处无需散落字符串比较逻辑。
                 MineruTaskResultResponse result = objectMapper.readValue(
                         response.body(), MineruTaskResultResponse.class);
 
@@ -167,6 +178,7 @@ public class MineruClient {
                             + ", msg=" + result.getErrorMessage());
                 }
                 if (result.isFinished()) {
+                    // done 状态必须同时提供 ZIP 地址，否则没有可供后续处理的实际产物。
                     if (result.getFullZipUrl() == null || result.getFullZipUrl().isBlank()) {
                         throw new RuntimeException("MinerU 解析完成但未返回 full_zip_url: taskId=" + taskId);
                     }
@@ -191,6 +203,7 @@ public class MineruClient {
      * <p>ZIP 只能顺序读取，因此单次遍历收集所有需要的条目，避免重复下载。</p>
      */
     private DocumentParseResult downloadArtifacts(String zipUrl) {
+        // ZIP 可能包含大体积图片，因此响应体以流的方式处理，不先整体加载到内存。
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(zipUrl))
                 .timeout(Duration.ofMinutes(5))
@@ -209,6 +222,7 @@ public class MineruClient {
                 }
             }
 
+            // full.md 是必需产物；content_list 和图片用于提高后续结构化分片及检索质量。
             String markdown = null;
             String contentListJson = null;
             Map<String, DocumentParseResult.ImageResource> images = new LinkedHashMap<>();
@@ -224,6 +238,7 @@ public class MineruClient {
                         continue;
                     }
 
+                    // 在读取内容前先校验条目路径，阻断绝对路径和 ../ 路径穿越。
                     String entryName = normalizeEntryName(entry.getName());
                     if (entryName == null) {
                         log.warn("跳过非法 ZIP 条目: {}", entry.getName());
@@ -231,6 +246,7 @@ public class MineruClient {
                         continue;
                     }
 
+                    // 每类核心文件只接受第一个匹配项，避免重复条目覆盖已经确认的产物。
                     if (markdown == null && isEntry(entryName, "full.md")) {
                         markdown = new String(
                                 readEntry(zip, properties.getMaxMarkdownBytes(), entryName),
@@ -242,6 +258,7 @@ public class MineruClient {
                     } else {
                         String contentType = imageContentType(entryName);
                         if (contentType != null) {
+                            // 同时限制图片数量、单张大小和累计大小，避免恶意或异常 ZIP 撑爆 JVM 堆。
                             if (images.size() >= properties.getMaxImageCount()
                                     || totalImageBytes >= properties.getMaxTotalImageBytes()) {
                                 skippedImages++;
@@ -266,6 +283,7 @@ public class MineruClient {
                                 zip.closeEntry();
                                 continue;
                             }
+                            // 保留规范化后的 ZIP 相对路径，之后用它与 Markdown 图片路径进行匹配。
                             images.put(entryName,
                                     new DocumentParseResult.ImageResource(entryName, data, contentType));
                             totalImageBytes += data.length;
@@ -279,6 +297,7 @@ public class MineruClient {
                 throw new RuntimeException("MinerU 结果 ZIP 中未找到 full.md");
             }
 
+            // content_list 异常采用降级策略：保留 Markdown 主产物，后续退化为纯文本结构分析。
             List<MineruContentElement> contentList = parseContentList(contentListJson);
             log.info("MinerU 产物提取完成: markdown={}字符, contentList={}项, 图片={}张({}KB), 跳过={}张",
                     markdown.length(), contentList.size(), images.size(),
@@ -315,6 +334,7 @@ public class MineruClient {
         if (maxBytes <= 0) {
             throw new IllegalArgumentException("ZIP 条目大小限制必须大于 0");
         }
+        // ZipEntry 声明的 size 可能缺失或不可信，因此以实际解压后的读取字节数执行限制。
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         byte[] buffer = new byte[8192];
         long total = 0;

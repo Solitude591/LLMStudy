@@ -55,12 +55,25 @@ public class DocumentServiceImpl implements DocumentService {
     /** 最大文件大小：50MB */
     private static final long MAX_FILE_SIZE = 50 * 1024 * 1024;
 
+    /** 负责原文件、解析后 Markdown、content_list 和图片的对象存储操作。 */
     private final MinioClient minioClient;
+
+    /** 提供 MinIO 桶名和访问端点，用于选择存储位置并拼接文档访问 URL。 */
     private final MinioProperties minioProperties;
+
+    /** 负责文档元数据查询、写入以及解析状态的原子更新。 */
     private final KnowledgeDocumentMapper documentMapper;
+
+    /** 根据文件扩展名把统一解析请求分发给 PDF、TXT 等具体解析器。 */
     private final DocumentParserRouter parserRouter;
+
+    /** 对 MinerU 提取出的图片生成语义描述，供 Markdown 和后续分片使用。 */
     private final VisionClient visionClient;
+
+    /** 负责识别并改写 Markdown/content_list 中的本地图片引用。 */
     private final MarkdownImageProcessor imageProcessor;
+
+    /** 将结构化 content_list 序列化为 JSON 后保存到 MinIO。 */
     private final JsonMapper objectMapper;
 
     public DocumentServiceImpl(MinioClient minioClient,
@@ -90,14 +103,17 @@ public class DocumentServiceImpl implements DocumentService {
             throw new IllegalArgumentException("上传者不能为空");
         }
 
+        // 原始文件名用于提取扩展名及保留展示信息；文件大小用于上传限制和 MinIO 流式写入。
         String originalName = file.getOriginalFilename();
         String fileType = extractFileType(originalName);
         long fileSize = file.getSize();
 
+        // 先在进入存储层之前拒绝不支持的格式，避免产生无法解析或存在安全风险的对象。
         if (!ALLOWED_FILE_TYPES.contains(fileType)) {
             throw new IllegalArgumentException(
                     "不支持的文件类型: ." + fileType + "，仅支持: " + ALLOWED_FILE_TYPES);
         }
+        // 限制上传体积，防止单次请求过度占用应用内存、网络带宽和对象存储空间。
         if (fileSize > MAX_FILE_SIZE) {
             throw new IllegalArgumentException(
                     "文件过大: " + (fileSize / 1024 / 1024) + "MB，最大允许 50MB");
@@ -112,6 +128,7 @@ public class DocumentServiceImpl implements DocumentService {
             return toVO(existing, true);
         }
 
+        // 标题与可见范围在 Service 再做一次兜底，避免非 HTTP 调用绕过 Controller 默认值。
         if (docTitle == null || docTitle.isBlank()) {
             docTitle = stripExtension(originalName);
         }
@@ -123,8 +140,10 @@ public class DocumentServiceImpl implements DocumentService {
         String docId = UUID.randomUUID().toString().replace("-", "");
 
         // 3. 上传原始文件到 MinIO（{docId}/raw/{originalName}）
+        // 对象键按文档隔离，后续解析产物也会落在同一个 docId 前缀下，便于统一清理。
         String objectKey = buildRawObjectKey(docId, originalName);
         try {
+            // 直接使用上传流写入 MinIO，避免先把整个文件读取到 JVM 堆内存。
             minioClient.putObject(PutObjectArgs.builder()
                     .bucket(minioProperties.getBucketName())
                     .object(objectKey)
@@ -137,9 +156,11 @@ public class DocumentServiceImpl implements DocumentService {
             throw new RuntimeException("文件存储失败，请稍后重试", e);
         }
 
+        // 持久化可访问 URL，PDF 解析器会把该地址交给 MinerU 主动拉取原始文件。
         String docUrl = buildDocUrl(objectKey);
 
         // 4. 写 MySQL：knowledge_document 表
+        // 只有 MinIO 上传成功后才创建元数据，保证数据库中的 docUrl 至少对应一个已写入对象。
         KnowledgeDocument doc = new KnowledgeDocument();
         doc.setDocId(docId);
         doc.setDocTitle(docTitle);
@@ -193,6 +214,7 @@ public class DocumentServiceImpl implements DocumentService {
             throw new IllegalArgumentException("docId 不能为空");
         }
 
+        // 每次解析均以数据库中的最新状态为准，不信任调用方传入文件地址或文件类型。
         KnowledgeDocument doc = documentMapper.findByDocId(docId);
         if (doc == null) {
             return null;
@@ -221,6 +243,7 @@ public class DocumentServiceImpl implements DocumentService {
 
         try {
             // 2. 根据文件类型动态路由到对应解析策略
+            // 上下文同时携带数据库元数据和 MinIO 对象键，使解析器无需重复推导原文件位置。
             DocumentParseContext parseContext =
                     new DocumentParseContext(doc, buildRawObjectKey(docId, doc.getOriginalName()));
             DocumentParseResult parseResult = parserRouter.parse(parseContext);
@@ -233,12 +256,15 @@ public class DocumentServiceImpl implements DocumentService {
                     parseResult.getContentList().size());
 
             // 3. 上传 Markdown 中实际引用到的图片
+            // 映射的 key 保持 Markdown 中的原始相对路径，value 是图片上传后的可访问 URL。
             Map<String, String> urlMapping = uploadReferencedImages(docId, parseResult, uploadedKeys);
 
             // 4. 生成图片描述：视觉模型优先，失败回落到 PDF 原文图注
+            // 只描述正文实际引用的图片，跳过 MinerU ZIP 中未被使用的中间图片。
             Map<String, String> descriptions = buildImageDescriptions(parseResult, urlMapping.keySet());
 
             // 5. 改写 Markdown 与 content_list 中的图片链接
+            // 改写后 Markdown 不再依赖临时 ZIP 内的相对路径，可独立从 MinIO 读取和展示。
             String rewrittenMarkdown = imageProcessor.rewriteImages(markdown, urlMapping, descriptions);
             imageProcessor.rewriteContentList(parseResult.getContentList(), urlMapping, descriptions);
 
@@ -251,6 +277,7 @@ public class DocumentServiceImpl implements DocumentService {
             // 7. 上传 content_list.json，供后续「基于标题的父子分段」直接消费
             if (parseResult.hasContentList()) {
                 String contentListKey = buildContentListObjectKey(docId);
+                // content_list 保留标题、页码和图片描述，后续分片无需重新解析 Markdown 猜测结构。
                 byte[] contentListBytes = objectMapper
                         .writeValueAsString(parseResult.getContentList())
                         .getBytes(StandardCharsets.UTF_8);
@@ -259,6 +286,7 @@ public class DocumentServiceImpl implements DocumentService {
             }
 
             // 8. 全部成功后才写回文档记录
+            // 先完成全部对象上传，再将状态切到 converted，避免其他流程读到不完整的解析产物。
             String convertedDocUrl = buildDocUrl(mdObjectKey);
             int updated = documentMapper.updateConverted(docId, convertedDocUrl, "converted");
             if (updated != 1) {
@@ -270,6 +298,7 @@ public class DocumentServiceImpl implements DocumentService {
             return convertedDocUrl;
         } catch (Exception e) {
             log.error("文档解析失败，回滚状态并清理产物: docId={}", docId, e);
+            // 只删除本次解析新写入的对象，原始文件仍然保留，用户可以再次发起解析。
             uploadedKeys.forEach(this::removeObjectQuietly);
             documentMapper.resetConverting(docId);
             throw new RuntimeException("文档解析失败: " + e.getMessage(), e);
@@ -287,6 +316,7 @@ public class DocumentServiceImpl implements DocumentService {
     private Map<String, String> uploadReferencedImages(String docId,
                                                        DocumentParseResult parseResult,
                                                        List<String> uploadedKeys) {
+        // 从语法树而非正则表达式提取图片，避免误识别代码块或普通文本中的类似字符串。
         Set<String> referenced = imageProcessor.extractLocalImagePaths(parseResult.getMarkdown());
         if (referenced.isEmpty()) {
             return Map.of();
@@ -294,6 +324,7 @@ public class DocumentServiceImpl implements DocumentService {
 
         Map<String, String> urlMapping = new LinkedHashMap<>();
         for (String rawPath : referenced) {
+            // 统一斜杠并移除 ./ 前缀，保证 Markdown 路径可以和 ZIP 条目名稳定匹配。
             String path = imageProcessor.normalizePath(rawPath);
             if (path == null) {
                 continue;
@@ -306,6 +337,7 @@ public class DocumentServiceImpl implements DocumentService {
                         "MinerU 产物缺少 Markdown 引用的图片: " + rawPath);
             }
 
+            // 图片对象名使用路径哈希，既避免特殊字符问题，也防止清洗后同名图片互相覆盖。
             String objectKey = buildImageObjectKey(docId, path);
             putObject(objectKey, image.getData(), image.getContentType());
             uploadedKeys.add(objectKey);
@@ -440,6 +472,7 @@ public class DocumentServiceImpl implements DocumentService {
     private String calculateFileMd5(MultipartFile file) {
         try (InputStream input = file.getInputStream()) {
             MessageDigest digest = MessageDigest.getInstance("MD5");
+            // 分块读取避免一次性加载整个上传文件；此处 MD5 仅用于内容去重，不用于安全校验。
             byte[] buffer = new byte[8192];
             int length;
             while ((length = input.read(buffer)) != -1) {
@@ -453,6 +486,7 @@ public class DocumentServiceImpl implements DocumentService {
 
     private void removeObjectQuietly(String objectKey) {
         try {
+            // 清理属于补偿操作，即使删除失败也不能覆盖最初的业务异常。
             minioClient.removeObject(RemoveObjectArgs.builder()
                     .bucket(minioProperties.getBucketName())
                     .object(objectKey)

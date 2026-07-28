@@ -52,6 +52,7 @@ public class MarkdownImageProcessor {
             return Set.of();
         }
 
+        // LinkedHashSet 在去重的同时保留图片首次出现顺序，便于后续稳定上传和生成描述。
         Set<String> destinations = new LinkedHashSet<>();
         Node document = parser.parse(markdown);
         document.accept(new AbstractVisitor() {
@@ -82,13 +83,16 @@ public class MarkdownImageProcessor {
             return markdown;
         }
 
+        // SourceSpan 给出行列位置，先计算每行起始偏移才能转换成字符串的绝对下标。
         List<Integer> lineOffsets = calculateLineOffsets(markdown);
         List<ImageOccurrence> occurrences = findLocalImageOccurrences(markdown, lineOffsets);
+        // 必须从文本末尾向前替换，避免前一次替换改变后续节点的绝对下标。
         occurrences.sort(Comparator.comparingInt(ImageOccurrence::start).reversed());
 
         StringBuilder result = new StringBuilder(markdown);
         int replaced = 0;
         for (ImageOccurrence occurrence : occurrences) {
+            // destination 使用 Markdown 原始字面量作为 key，确保精确匹配本次上传产生的 URL。
             String minioUrl = urlMapping.get(occurrence.destination());
             if (minioUrl == null) {
                 continue;
@@ -105,10 +109,12 @@ public class MarkdownImageProcessor {
                             occurrence.destination());
                     continue;
                 }
+                // 只替换目标地址，保留作者原本填写的 alt 文本和可选 title。
                 replacement = original.substring(0, destinationStart)
                         + minioUrl
                         + original.substring(destinationStart + occurrence.destination().length());
             } else {
+                // 有描述时用描述作为 alt，RAG 分片和无障碍阅读都能获得图片语义。
                 replacement = "![" + escapeAltText(description) + "](" + minioUrl + ")";
             }
             result.replace(occurrence.start(), occurrence.end(), replacement);
@@ -135,6 +141,7 @@ public class MarkdownImageProcessor {
             return;
         }
 
+        // 两份映射都按路径归一化，兼容 images/a.png 与 ./images/a.png 等等价写法。
         Map<String, String> urlByNormalized = normalizeKeys(urlMapping);
         Map<String, String> descByNormalized = normalizeKeys(descriptions);
 
@@ -148,6 +155,7 @@ public class MarkdownImageProcessor {
                 continue;
             }
 
+            // 描述和 URL 分别回填：即使某一方缺失，也不影响另一方被保存。
             String description = descByNormalized.get(imgPath);
             if (description != null && !description.isBlank()) {
                 element.setVisionDescription(description);
@@ -193,6 +201,7 @@ public class MarkdownImageProcessor {
                 String destination = image.getDestination();
                 List<SourceSpan> spans = image.getSourceSpans();
                 if (isLocalImage(destination) && spans != null && !spans.isEmpty()) {
+                    // 一个图片节点可能跨多个 span，使用首尾 span 得到完整源码替换范围。
                     SourceSpan first = spans.get(0);
                     SourceSpan last = spans.get(spans.size() - 1);
                     int start = toOffset(first.getLineIndex(), first.getColumnIndex(),
@@ -213,6 +222,7 @@ public class MarkdownImageProcessor {
 
     private List<Integer> calculateLineOffsets(String text) {
         List<Integer> offsets = new ArrayList<>();
+        // 第一行固定从字符串下标 0 开始；每个换行符后的字符是下一行起点。
         offsets.add(0);
         for (int i = 0; i < text.length(); i++) {
             if (text.charAt(i) == '\n') {

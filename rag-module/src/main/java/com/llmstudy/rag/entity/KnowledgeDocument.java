@@ -7,19 +7,46 @@ import java.time.LocalDateTime;
  */
 public class KnowledgeDocument {
 
+    /** MySQL 自增主键，仅用于数据库内部关联，不作为对外暴露的文档标识。 */
     private Long id;
+
+    /** 业务文档 ID，上传时生成的无横线 UUID，贯穿 MinIO 路径、解析和分片流程。 */
     private String docId;
+
+    /** 展示给用户的文档标题；上传时未指定则使用去掉扩展名后的原文件名。 */
     private String docTitle;
+
+    /** 用户上传时的原始文件名，包含文件扩展名。 */
     private String originalName;
+
+    /** 规范化为小写的文件扩展名，用于校验文件类型以及选择对应的解析策略。 */
     private String fileType;
+
+    /** 原始文件大小，单位为字节。 */
     private Long fileSize;
+
+    /** 原始文件内容的 MD5，用于在同一上传者范围内判断文件是否重复。 */
     private String fileMd5;
+
+    /** 上传者标识；当前由请求参数传入，接入登录体系后应取当前登录用户。 */
     private String uploader;
+
+    /** 原始文件在 MinIO 中的可访问地址，也是 PDF 提交给 MinerU 时使用的地址。 */
     private String docUrl;
+
+    /** 文档处理状态，例如 uploaded、converting、converted，用于控制解析流程流转。 */
     private String docStatus;
+
+    /** 解析完成后的 Markdown 文件地址；尚未完成解析时为空。 */
     private String convertedDocUrl;
+
+    /** 文档可见范围，例如 private、internal、public。 */
     private String visibility;
+
+    /** 文档元数据记录的创建时间，由数据库写入。 */
     private LocalDateTime createdAt;
+
+    /** 文档元数据最近一次更新时间，由数据库在记录变更时维护。 */
     private LocalDateTime updatedAt;
 
     public Long getId() {

@@ -34,10 +34,12 @@ public class TxtDocumentParser implements DocumentParserStrategy {
 
     @Override
     public DocumentParseResult parse(DocumentParseContext context) {
+        // TXT 不需要第三方解析服务，直接依据对象键从 MinIO 读取原始内容。
         try (GetObjectResponse input = minioClient.getObject(GetObjectArgs.builder()
                 .bucket(minioProperties.getBucketName())
                 .object(context.sourceObjectKey())
                 .build())) {
+            // 多读 1 个字节用于准确判断是否超限，避免刚好达到上限的合法文件被误判。
             byte[] content = input.readNBytes(MAX_TEXT_BYTES + 1);
             if (content.length > MAX_TEXT_BYTES) {
                 throw new IllegalArgumentException("TXT 文件超过最大解析限制 50MB");
@@ -47,6 +49,7 @@ public class TxtDocumentParser implements DocumentParserStrategy {
             if (!text.isEmpty() && text.charAt(0) == '\uFEFF') {
                 text = text.substring(1);
             }
+            // 统一封装为解析结果；TXT 没有结构化 content_list，也没有图片资源。
             return DocumentParseResult.text(text);
         } catch (RuntimeException e) {
             throw e;

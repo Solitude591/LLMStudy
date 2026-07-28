@@ -7,16 +7,37 @@ import java.time.LocalDateTime;
  */
 public class KnowledgeSegment {
 
+    /** MySQL 自增主键，仅作为数据库内部记录标识。 */
     private Long id;
+
+    /** 分片的业务唯一 ID，后续可用于关联向量数据库中的对应向量。 */
     private String chunkId;
+
+    /** 分片的实际文本内容，是生成 embedding 和执行语义检索的输入。 */
     private String text;
+
+    /** 所属文档的业务 ID，对应 knowledge_document.doc_id。 */
     private String docId;
+
+    /** 分片在原文中的顺序，从而在召回后仍可恢复相邻片段和原始上下文。 */
     private Integer chunkOrder;
+
+    /** 向量写入向量数据库后返回或生成的标识，用于关联、更新和删除 embedding。 */
     private String embeddingId;
+
+    /** 分片处理状态，用于记录待向量化、已完成或处理失败等阶段。 */
     private String status;
+
+    /** 分片附加元数据的 JSON 字符串，可保存标题层级、页码、来源路径等信息。 */
     private String metadata;
+
+    /** 是否跳过向量化；适用于仅保留结构但不参与语义检索的特殊片段。 */
     private Boolean skipEmbedding;
+
+    /** 分片记录的创建时间，由数据库写入。 */
     private LocalDateTime createdAt;
+
+    /** 分片记录最近一次更新时间，由数据库在记录变更时维护。 */
     private LocalDateTime updatedAt;
 
     public Long getId() {

@@ -34,12 +34,15 @@ public class DocumentController {
      */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResult<DocumentVO> upload(
+            // MultipartFile 只代表本次 HTTP 请求中的临时文件，真正的持久化由 Service 写入 MinIO。
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "docTitle", required = false) String docTitle,
             @RequestParam("uploader") String uploader,
             @RequestParam(value = "visibility", defaultValue = "private") String visibility) {
 
+        // Controller 只负责接收请求和包装响应；格式校验、去重、存储及元数据落库均由 Service 完成。
         DocumentVO vo = documentService.uploadDocument(file, docTitle, uploader, visibility);
+        // 重复上传会复用已有文档记录，因此仍返回成功响应，但通过提示语和 duplicate 字段告知前端。
         return ApiResult.ok(vo.isDuplicate() ? "文件已上传过" : "上传成功", vo);
     }
 
@@ -76,6 +79,7 @@ public class DocumentController {
      */
     @PostMapping("/{docId}/parse")
     public ApiResult<String> parse(@PathVariable String docId) {
+        // 当前解析接口为同步调用：方法返回时，解析产物已上传且文档状态已更新为 converted。
         String convertedDocUrl = documentService.parseDocument(docId);
         return ApiResult.ok("解析完成", convertedDocUrl);
     }

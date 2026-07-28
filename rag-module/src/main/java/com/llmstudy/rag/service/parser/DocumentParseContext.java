@@ -11,6 +11,7 @@ import com.llmstudy.rag.entity.KnowledgeDocument;
 public record DocumentParseContext(KnowledgeDocument document, String sourceObjectKey) {
 
     public DocumentParseContext {
+        // 在统一入口校验上下文，具体解析策略可以直接使用这两个值而无需重复判空。
         if (document == null) {
             throw new IllegalArgumentException("待解析文档不能为空");
         }

@@ -1,5 +1,7 @@
 package com.llmstudy.rag.entity;
 
+import com.llmstudy.rag.enums.SegmentStatus;
+
 import java.time.LocalDateTime;
 
 /**
@@ -94,6 +96,23 @@ public class KnowledgeSegment {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    /**
+     * 将数据库字符串转换为强类型枚举，业务层无需直接使用状态字符串。
+     */
+    public SegmentStatus getSegmentStatus() {
+        return SegmentStatus.fromValue(status);
+    }
+
+    /**
+     * 使用枚举设置分片状态，数据库仍保存原有的小写状态值。
+     */
+    public void setSegmentStatus(SegmentStatus segmentStatus) {
+        if (segmentStatus == null) {
+            throw new IllegalArgumentException("分片状态不能为空");
+        }
+        this.status = segmentStatus.value();
     }
 
     public String getMetadata() {

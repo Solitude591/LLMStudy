@@ -1,7 +1,10 @@
 package com.llmstudy.rag.controller;
 
 import com.llmstudy.rag.dto.ApiResult;
+import com.llmstudy.rag.dto.DocumentSplitResult;
 import com.llmstudy.rag.dto.DocumentVO;
+import com.llmstudy.rag.enums.DocumentStatus;
+import com.llmstudy.rag.service.DocumentSegmentService;
 import com.llmstudy.rag.service.DocumentService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -15,15 +18,19 @@ import org.springframework.web.multipart.MultipartFile;
 public class DocumentController {
 
     private final DocumentService documentService;
+    private final DocumentSegmentService documentSegmentService;
 
-    public DocumentController(DocumentService documentService) {
+    public DocumentController(DocumentService documentService,
+                              DocumentSegmentService documentSegmentService) {
         this.documentService = documentService;
+        this.documentSegmentService = documentSegmentService;
     }
 
     /**
      * POST /document/upload
      *
-     * 上传文件到 MinIO 并创建文档元数据记录。
+     * 上传文件到 MinIO、创建文档元数据记录，并按文件类型自动解析。
+     * PDF 使用 MinerU，TXT 使用本地读取策略，未注册策略的格式仅完成上传。
      * 请求格式：multipart/form-data
      *
      * 参数：
@@ -40,10 +47,20 @@ public class DocumentController {
             @RequestParam("uploader") String uploader,
             @RequestParam(value = "visibility", defaultValue = "private") String visibility) {
 
-        // Controller 只负责接收请求和包装响应；格式校验、去重、存储及元数据落库均由 Service 完成。
+        // Controller 只负责接收请求和包装响应；校验、去重、存储、落库及自动解析均由 Service 完成。
         DocumentVO vo = documentService.uploadDocument(file, docTitle, uploader, visibility);
         // 重复上传会复用已有文档记录，因此仍返回成功响应，但通过提示语和 duplicate 字段告知前端。
-        return ApiResult.ok(vo.isDuplicate() ? "文件已上传过" : "上传成功", vo);
+        String message;
+        if (vo.isDuplicate()) {
+            message = "文件已上传过";
+        } else if (DocumentStatus.CONVERTED.matches(vo.getDocStatus())) {
+            message = "上传并解析完成";
+        } else if (DocumentStatus.CONVERTING.matches(vo.getDocStatus())) {
+            message = "上传成功，文档解析中";
+        } else {
+            message = "上传成功，当前格式无需自动解析";
+        }
+        return ApiResult.ok(message, vo);
     }
 
     /**
@@ -61,6 +78,24 @@ public class DocumentController {
     }
 
     /**
+     * POST /document/{docId}/split
+     *
+     * 根据解析后的 Markdown 生成父子分片并保存到 knowledge_segment。
+     * 当前接口只执行分片入库，segment.status 初始化为 init，不触发向量化。
+     */
+    @PostMapping("/{docId}/split")
+    public ApiResult<DocumentSplitResult> splitDocument(
+            @PathVariable String docId) {
+        // Service 内部会校验文档状态、读取 converted_doc_url，并保证重复请求不会重复入库。
+        DocumentSplitResult result =
+                documentSegmentService.splitDocument(docId);
+        String message = result.isAlreadySplit()
+                ? "文档已经完成分片"
+                : "文档分片完成";
+        return ApiResult.ok(message, result);
+    }
+
+    /**
      * GET /document/list
      *
      * 按上传者查询文档列表（待完善分页）。
@@ -71,16 +106,4 @@ public class DocumentController {
         return ApiResult.ok(null);
     }
 
-    /**
-     * POST /document/{docId}/parse
-     *
-     * 调用 MinerU 解析文档，会阻塞等待解析完成。
-     * 流程：提交解析任务 → 轮询等待 → markdown 上传 MinIO → 更新状态为 converted
-     */
-    @PostMapping("/{docId}/parse")
-    public ApiResult<String> parse(@PathVariable String docId) {
-        // 当前解析接口为同步调用：方法返回时，解析产物已上传且文档状态已更新为 converted。
-        String convertedDocUrl = documentService.parseDocument(docId);
-        return ApiResult.ok("解析完成", convertedDocUrl);
-    }
 }

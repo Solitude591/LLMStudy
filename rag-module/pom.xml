@@ -20,6 +20,8 @@
     <properties>
         <java.version>21</java.version>
         <spring-ai.version>2.0.0</spring-ai.version>
+        <!-- 使用当前稳定版核心包；Spring Boot Starter 的扩展模块仍带 beta 后缀，暂不引入。 -->
+        <langchain4j.version>1.15.1</langchain4j.version>
     </properties>
 
     <dependencies>
@@ -80,6 +82,15 @@
             <version>0.29.0</version>
         </dependency>
 
+        <!--
+            LangChain4j 核心能力：后续用于文档切分、Embedding、RAG 与 AI Service。
+            暂不引入 Spring Boot 自动配置 Starter，避免和项目现有 Spring AI Bean 冲突。
+        -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+        </dependency>
+
         <!-- Spring Boot Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -94,6 +105,15 @@
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>
                 <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- 统一管理 LangChain4j 核心及后续扩展模块版本，避免各组件版本不一致。 -->
+            <dependency>
+                <groupId>dev.langchain4j</groupId>
+                <artifactId>langchain4j-bom</artifactId>
+                <version>${langchain4j.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

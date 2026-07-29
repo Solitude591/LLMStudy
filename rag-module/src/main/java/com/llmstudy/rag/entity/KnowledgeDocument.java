@@ -1,5 +1,7 @@
 package com.llmstudy.rag.entity;
 
+import com.llmstudy.rag.enums.DocumentStatus;
+
 import java.time.LocalDateTime;
 
 /**
@@ -34,7 +36,7 @@ public class KnowledgeDocument {
     /** 原始文件在 MinIO 中的可访问地址，也是 PDF 提交给 MinerU 时使用的地址。 */
     private String docUrl;
 
-    /** 文档处理状态，例如 uploaded、converting、converted，用于控制解析流程流转。 */
+    /** 数据库中的文档状态字符串；业务代码通过 DocumentStatus 访问。 */
     private String docStatus;
 
     /** 解析完成后的 Markdown 文件地址；尚未完成解析时为空。 */
@@ -127,6 +129,23 @@ public class KnowledgeDocument {
 
     public void setDocStatus(String docStatus) {
         this.docStatus = docStatus;
+    }
+
+    /**
+     * 将数据库字符串转换为强类型枚举，避免业务层直接比较魔法字符串。
+     */
+    public DocumentStatus getDocumentStatus() {
+        return DocumentStatus.fromValue(docStatus);
+    }
+
+    /**
+     * 业务层使用枚举设置状态，落库前仍转换为兼容现有表结构的小写字符串。
+     */
+    public void setDocumentStatus(DocumentStatus documentStatus) {
+        if (documentStatus == null) {
+            throw new IllegalArgumentException("文档状态不能为空");
+        }
+        this.docStatus = documentStatus.value();
     }
 
     public String getConvertedDocUrl() {

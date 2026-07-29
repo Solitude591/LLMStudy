@@ -1,6 +1,7 @@
 package com.llmstudy.rag.mapper;
 
 import com.llmstudy.rag.entity.KnowledgeDocument;
+import com.llmstudy.rag.enums.DocumentStatus;
 import org.apache.ibatis.annotations.*;
 
 import java.util.List;
@@ -14,6 +15,12 @@ public interface KnowledgeDocumentMapper {
     @Select("SELECT * FROM knowledge_document WHERE doc_id = #{docId}")
     KnowledgeDocument findByDocId(@Param("docId") String docId);
 
+    /**
+     * 分片事务中锁定文档记录，防止同一个 docId 被并发重复分片。
+     */
+    @Select("SELECT * FROM knowledge_document WHERE doc_id = #{docId} FOR UPDATE")
+    KnowledgeDocument findByDocIdForUpdate(@Param("docId") String docId);
+
     @Select("""
             SELECT * FROM knowledge_document
             WHERE uploader = #{uploader} AND file_md5 = #{fileMd5}
@@ -26,7 +33,11 @@ public interface KnowledgeDocumentMapper {
     List<KnowledgeDocument> findByUploader(@Param("uploader") String uploader);
 
     @Select("SELECT * FROM knowledge_document WHERE doc_status = #{docStatus} ORDER BY created_at DESC")
-    List<KnowledgeDocument> findByStatus(@Param("docStatus") String docStatus);
+    List<KnowledgeDocument> findByStatusValue(@Param("docStatus") String docStatus);
+
+    default List<KnowledgeDocument> findByStatus(DocumentStatus docStatus) {
+        return findByStatusValue(docStatus.value());
+    }
 
     @Select("SELECT * FROM knowledge_document ORDER BY created_at DESC")
     List<KnowledgeDocument> findAll();
@@ -56,33 +67,49 @@ public interface KnowledgeDocumentMapper {
     int update(KnowledgeDocument doc);
 
     @Update("UPDATE knowledge_document SET doc_status = #{docStatus} WHERE doc_id = #{docId}")
-    int updateStatus(@Param("docId") String docId, @Param("docStatus") String docStatus);
+    int updateStatusValue(@Param("docId") String docId,
+                          @Param("docStatus") String docStatus);
+
+    default int updateStatus(String docId, DocumentStatus docStatus) {
+        return updateStatusValue(docId, docStatus.value());
+    }
 
     /**
-     * 原子抢占解析任务，防止两个请求同时解析并互相覆盖/清理产物。
+     * 原子比较并更新状态，防止并发请求同时推进同一文档。
      */
     @Update("""
             UPDATE knowledge_document
-            SET doc_status = 'converting'
-            WHERE doc_id = #{docId} AND doc_status = 'uploaded'
+            SET doc_status = #{targetStatus}
+            WHERE doc_id = #{docId} AND doc_status = #{expectedStatus}
             """)
-    int markConverting(@Param("docId") String docId);
+    int compareAndSetStatusValue(@Param("docId") String docId,
+                                 @Param("targetStatus") String targetStatus,
+                                 @Param("expectedStatus") String expectedStatus);
+
+    default int compareAndSetStatus(String docId,
+                                   DocumentStatus targetStatus,
+                                   DocumentStatus expectedStatus) {
+        return compareAndSetStatusValue(
+                docId, targetStatus.value(), expectedStatus.value());
+    }
 
     @Update("""
             UPDATE knowledge_document
             SET converted_doc_url = #{convertedDocUrl}, doc_status = #{docStatus}
-            WHERE doc_id = #{docId} AND doc_status = 'converting'
+            WHERE doc_id = #{docId} AND doc_status = #{expectedStatus}
             """)
-    int updateConverted(@Param("docId") String docId,
-                        @Param("convertedDocUrl") String convertedDocUrl,
-                        @Param("docStatus") String docStatus);
+    int updateConvertedValue(@Param("docId") String docId,
+                             @Param("convertedDocUrl") String convertedDocUrl,
+                             @Param("docStatus") String docStatus,
+                             @Param("expectedStatus") String expectedStatus);
 
-    @Update("""
-            UPDATE knowledge_document
-            SET doc_status = 'uploaded'
-            WHERE doc_id = #{docId} AND doc_status = 'converting'
-            """)
-    int resetConverting(@Param("docId") String docId);
+    default int updateConverted(String docId,
+                                String convertedDocUrl,
+                                DocumentStatus docStatus,
+                                DocumentStatus expectedStatus) {
+        return updateConvertedValue(
+                docId, convertedDocUrl, docStatus.value(), expectedStatus.value());
+    }
 
     @Delete("DELETE FROM knowledge_document WHERE doc_id = #{docId}")
     int deleteByDocId(@Param("docId") String docId);

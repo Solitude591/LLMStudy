@@ -27,7 +27,8 @@ public class PdfDocumentParser implements DocumentParserStrategy {
 
     @Override
     public DocumentParseResult parse(DocumentParseContext context) {
-        // MinerU 从外部主动下载 PDF，因此传入数据库中保存的 MinIO 可访问 URL。
+        // MinerU 当前任务接口只接受公网 URL，因此传入上传后生成的 MinIO 地址；
+        // PDF 策略不会在应用内部根据 docId 再下载一次原文件。
         return mineruClient.parse(context.document().getDocUrl());
     }
 }

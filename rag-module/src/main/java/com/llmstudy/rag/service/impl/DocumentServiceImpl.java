@@ -6,6 +6,7 @@ import com.llmstudy.rag.dto.DocumentParseResult;
 import com.llmstudy.rag.dto.DocumentVO;
 import com.llmstudy.rag.dto.MineruContentElement;
 import com.llmstudy.rag.entity.KnowledgeDocument;
+import com.llmstudy.rag.enums.DocumentStatus;
 import com.llmstudy.rag.mapper.KnowledgeDocumentMapper;
 import com.llmstudy.rag.service.DocumentService;
 import com.llmstudy.rag.service.MarkdownImageProcessor;
@@ -125,7 +126,8 @@ public class DocumentServiceImpl implements DocumentService {
         if (existing != null) {
             log.info("检测到重复文件，跳过 MinIO 上传: uploader={}, fileMd5={}, docId={}",
                     uploader, fileMd5, existing.getDocId());
-            return toVO(existing, true);
+            // 重复上传仍可复用本次请求携带的文件流，给之前解析失败的记录补做解析。
+            return autoParseAfterUpload(existing, file, true);
         }
 
         // 标题与可见范围在 Service 再做一次兜底，避免非 HTTP 调用绕过 Controller 默认值。
@@ -170,7 +172,8 @@ public class DocumentServiceImpl implements DocumentService {
         doc.setFileMd5(fileMd5);
         doc.setUploader(uploader);
         doc.setDocUrl(docUrl);
-        doc.setDocStatus("uploaded");
+        // 文档状态统一通过枚举设置，数据库仍保存兼容现有数据的小写值。
+        doc.setDocumentStatus(DocumentStatus.UPLOADED);
         doc.setVisibility(visibility);
         try {
             documentMapper.insert(doc);
@@ -182,7 +185,8 @@ public class DocumentServiceImpl implements DocumentService {
             if (concurrentExisting != null) {
                 log.info("并发重复上传已拦截: uploader={}, fileMd5={}, docId={}",
                         uploader, fileMd5, concurrentExisting.getDocId());
-                return toVO(concurrentExisting, true);
+                // 另一个请求已完成落库时，当前请求的同内容文件仍可直接作为解析输入。
+                return autoParseAfterUpload(concurrentExisting, file, true);
             }
             throw e;
         } catch (RuntimeException e) {
@@ -192,20 +196,9 @@ public class DocumentServiceImpl implements DocumentService {
 
         log.info("文档记录创建成功: docId={}, title={}", docId, docTitle);
 
-        // 5. 构造返回值
-        return DocumentVO.builder()
-                .docId(docId)
-                .docTitle(docTitle)
-                .originalName(originalName)
-                .fileType(fileType)
-                .fileSize(fileSize)
-                .fileMd5(fileMd5)
-                .uploader(uploader)
-                .docUrl(docUrl)
-                .docStatus("uploaded")
-                .visibility(visibility)
-                .duplicate(false)
-                .build();
+        // 5. 上传完成后自动路由解析。PDF 会进入 MinerU，TXT 使用本地读取策略；
+        // 尚未注册解析器的格式只保留 uploaded 状态，不会调用 MinerU。
+        return autoParseAfterUpload(doc, file, false);
     }
 
     @Override
@@ -214,7 +207,7 @@ public class DocumentServiceImpl implements DocumentService {
             throw new IllegalArgumentException("docId 不能为空");
         }
 
-        // 每次解析均以数据库中的最新状态为准，不信任调用方传入文件地址或文件类型。
+        // 查询接口始终返回数据库中的最新状态和转换结果地址。
         KnowledgeDocument doc = documentMapper.findByDocId(docId);
         if (doc == null) {
             return null;
@@ -222,18 +215,22 @@ public class DocumentServiceImpl implements DocumentService {
         return toVO(doc);
     }
 
-    @Override
-    public String parseDocument(String docId) {
-        KnowledgeDocument doc = documentMapper.findByDocId(docId);
-        if (doc == null) {
-            throw new IllegalArgumentException("文档不存在: " + docId);
-        }
-        if (!"uploaded".equals(doc.getDocStatus())) {
+    /**
+     * 消费上传请求中的当前文件并完成内部解析，不作为 Service 公共能力暴露。
+     */
+    private String parseUploadedDocument(KnowledgeDocument doc, MultipartFile sourceFile) {
+        String docId = doc.getDocId();
+
+        // 上传流程已经持有完整文档记录，无需再根据 docId 查询一次数据库。
+        if (doc.getDocumentStatus() != DocumentStatus.UPLOADED) {
             throw new IllegalStateException("文档状态不正确，当前状态: " + doc.getDocStatus());
         }
 
-        // 1. 原子抢占解析权，避免并发请求重复调用 MinerU、互相覆盖解析产物
-        if (documentMapper.markConverting(docId) != 1) {
+        // 原子抢占解析权，防止同内容并发上传触发两次 MinerU 或重复写入产物。
+        if (documentMapper.compareAndSetStatus(
+                docId,
+                DocumentStatus.CONVERTING,
+                DocumentStatus.UPLOADED) != 1) {
             throw new IllegalStateException("文档正在解析或状态已发生变化，请勿重复提交: " + docId);
         }
         log.info("开始解析文档: docId={}", docId);
@@ -242,10 +239,10 @@ public class DocumentServiceImpl implements DocumentService {
         List<String> uploadedKeys = new ArrayList<>();
 
         try {
-            // 2. 根据文件类型动态路由到对应解析策略
-            // 上下文同时携带数据库元数据和 MinIO 对象键，使解析器无需重复推导原文件位置。
-            DocumentParseContext parseContext =
-                    new DocumentParseContext(doc, buildRawObjectKey(docId, doc.getOriginalName()));
+            // 把当前上传文件直接透传给策略：TXT 读取该流，PDF 则使用 doc 中的公网 URL。
+            DocumentParseContext parseContext = new DocumentParseContext(doc, sourceFile);
+
+            // 路由器依据扩展名选择策略，只有 PDF 策略会调用 MinerU。
             DocumentParseResult parseResult = parserRouter.parse(parseContext);
             String markdown = parseResult.getMarkdown();
             if (markdown == null || markdown.isBlank()) {
@@ -288,7 +285,11 @@ public class DocumentServiceImpl implements DocumentService {
             // 8. 全部成功后才写回文档记录
             // 先完成全部对象上传，再将状态切到 converted，避免其他流程读到不完整的解析产物。
             String convertedDocUrl = buildDocUrl(mdObjectKey);
-            int updated = documentMapper.updateConverted(docId, convertedDocUrl, "converted");
+            int updated = documentMapper.updateConverted(
+                    docId,
+                    convertedDocUrl,
+                    DocumentStatus.CONVERTED,
+                    DocumentStatus.CONVERTING);
             if (updated != 1) {
                 throw new IllegalStateException("更新文档解析结果失败: docId=" + docId);
             }
@@ -298,9 +299,13 @@ public class DocumentServiceImpl implements DocumentService {
             return convertedDocUrl;
         } catch (Exception e) {
             log.error("文档解析失败，回滚状态并清理产物: docId={}", docId, e);
-            // 只删除本次解析新写入的对象，原始文件仍然保留，用户可以再次发起解析。
+            // 只删除本次解析新写入的对象，原始文件仍保留；再次上传同内容文件即可重试。
             uploadedKeys.forEach(this::removeObjectQuietly);
-            documentMapper.resetConverting(docId);
+            // 仅允许 converting 回退到 uploaded，防止覆盖其他并发流程写入的新状态。
+            documentMapper.compareAndSetStatus(
+                    docId,
+                    DocumentStatus.UPLOADED,
+                    DocumentStatus.CONVERTING);
             throw new RuntimeException("文档解析失败: " + e.getMessage(), e);
         }
     }
@@ -467,6 +472,53 @@ public class DocumentServiceImpl implements DocumentService {
                 .createdAt(doc.getCreatedAt())
                 .duplicate(duplicate)
                 .build();
+    }
+
+    /**
+     * 上传完成后按文件类型自动解析。
+     *
+     * <p>路由器只会选择已注册的策略，因此 PDF 才会进入 MinerU；
+     * TXT 等格式由自己的策略处理，DOCX 等暂未支持的格式保持 uploaded。</p>
+     */
+    private DocumentVO autoParseAfterUpload(KnowledgeDocument doc,
+                                            MultipartFile sourceFile,
+                                            boolean duplicate) {
+        // 未注册策略的格式只保存原始文件，不进入任何解析服务。
+        if (!parserRouter.supports(doc.getFileType())) {
+            log.info("当前文件类型未注册自动解析策略，跳过解析: docId={}, type={}",
+                    doc.getDocId(), doc.getFileType());
+            return toVO(doc, duplicate);
+        }
+
+        if (doc.getDocumentStatus() != DocumentStatus.UPLOADED) {
+            log.info("文档无需重复自动解析: docId={}, status={}",
+                    doc.getDocId(), doc.getDocStatus());
+            return toVO(doc, duplicate);
+        }
+
+        log.info("上传完成，开始自动解析: docId={}, type={}",
+                doc.getDocId(), doc.getFileType());
+        try {
+            // 直接使用本次上传的 MultipartFile，避免本地解析器再从 MinIO 下载原文件。
+            parseUploadedDocument(doc, sourceFile);
+        } catch (IllegalStateException concurrentStateChange) {
+            // 并发重复上传可能已经由另一个请求抢到解析权，此时返回最新状态即可。
+            KnowledgeDocument latest = documentMapper.findByDocId(doc.getDocId());
+            if (latest != null
+                    && (latest.getDocumentStatus() == DocumentStatus.CONVERTING
+                    || latest.getDocumentStatus() == DocumentStatus.CONVERTED)) {
+                log.info("文档已由其他请求接管解析: docId={}, status={}",
+                        latest.getDocId(), latest.getDocStatus());
+                return toVO(latest, duplicate);
+            }
+            throw concurrentStateChange;
+        }
+
+        KnowledgeDocument parsed = documentMapper.findByDocId(doc.getDocId());
+        if (parsed == null) {
+            throw new IllegalStateException("自动解析完成后文档记录不存在: " + doc.getDocId());
+        }
+        return toVO(parsed, duplicate);
     }
 
     private String calculateFileMd5(MultipartFile file) {

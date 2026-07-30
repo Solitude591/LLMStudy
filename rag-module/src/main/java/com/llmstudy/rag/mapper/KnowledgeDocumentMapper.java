@@ -93,9 +93,66 @@ public interface KnowledgeDocumentMapper {
                 docId, targetStatus.value(), expectedStatus.value());
     }
 
+    /**
+     * 仅当文档仍处于 expectedStatus 时回退状态并记录错误。
+     * 防止迟到事件或并发失败处理覆盖已经推进到后续阶段的新状态。
+     */
     @Update("""
             UPDATE knowledge_document
-            SET converted_doc_url = #{convertedDocUrl}, doc_status = #{docStatus}
+            SET doc_status = #{targetStatus}, error_message = #{errorMessage}
+            WHERE doc_id = #{docId} AND doc_status = #{expectedStatus}
+            """)
+    int compareAndSetStatusWithErrorValue(
+            @Param("docId") String docId,
+            @Param("targetStatus") String targetStatus,
+            @Param("expectedStatus") String expectedStatus,
+            @Param("errorMessage") String errorMessage);
+
+    default int compareAndSetStatusWithError(
+            String docId,
+            DocumentStatus targetStatus,
+            DocumentStatus expectedStatus,
+            String errorMessage) {
+        return compareAndSetStatusWithErrorValue(
+                docId, targetStatus.value(), expectedStatus.value(), errorMessage);
+    }
+
+    /**
+     * 完成阶段时原子推进状态并清除本阶段之前遗留的错误。
+     */
+    @Update("""
+            UPDATE knowledge_document
+            SET doc_status = #{targetStatus}, error_message = NULL
+            WHERE doc_id = #{docId} AND doc_status = #{expectedStatus}
+            """)
+    int compareAndSetStatusAndClearErrorValue(
+            @Param("docId") String docId,
+            @Param("targetStatus") String targetStatus,
+            @Param("expectedStatus") String expectedStatus);
+
+    default int compareAndSetStatusAndClearError(
+            String docId,
+            DocumentStatus targetStatus,
+            DocumentStatus expectedStatus) {
+        return compareAndSetStatusAndClearErrorValue(
+                docId, targetStatus.value(), expectedStatus.value());
+    }
+
+    /**
+     * 清除文档的错误信息。
+     * 用于重试成功后清理历史错误记录。
+     *
+     * @param docId 文档 ID
+     * @return 更新的行数
+     */
+    @Update("UPDATE knowledge_document SET error_message = NULL WHERE doc_id = #{docId}")
+    int clearErrorMessage(@Param("docId") String docId);
+
+    @Update("""
+            UPDATE knowledge_document
+            SET converted_doc_url = #{convertedDocUrl},
+                doc_status = #{docStatus},
+                error_message = NULL
             WHERE doc_id = #{docId} AND doc_status = #{expectedStatus}
             """)
     int updateConvertedValue(@Param("docId") String docId,

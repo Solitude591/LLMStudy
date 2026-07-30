@@ -14,7 +14,9 @@ public enum DocumentStatus {
     UPLOADED("uploaded"),
     CONVERTING("converting"),
     CONVERTED("converted"),
+    SPLITTING("splitting"),
     CHUNKED("chunked"),
+    VECTORING("vectoring"),
     VECTOR_STORED("vector_stored");
 
     private final String value;

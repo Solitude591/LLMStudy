@@ -42,6 +42,9 @@ public class KnowledgeDocument {
     /** 解析完成后的 Markdown 文件地址；尚未完成解析时为空。 */
     private String convertedDocUrl;
 
+    /** 文档处理失败时的错误信息；成功时为 null。用于事件驱动流程中记录各阶段失败原因。 */
+    private String errorMessage;
+
     /** 文档可见范围，例如 private、internal、public。 */
     private String visibility;
 
@@ -156,6 +159,14 @@ public class KnowledgeDocument {
         this.convertedDocUrl = convertedDocUrl;
     }
 
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public void setErrorMessage(String errorMessage) {
+        this.errorMessage = errorMessage;
+    }
+
     public String getVisibility() {
         return visibility;
     }
@@ -194,6 +205,7 @@ public class KnowledgeDocument {
                 ", docUrl='" + docUrl + '\'' +
                 ", docStatus='" + docStatus + '\'' +
                 ", convertedDocUrl='" + convertedDocUrl + '\'' +
+                ", errorMessage='" + errorMessage + '\'' +
                 ", visibility='" + visibility + '\'' +
                 ", createdAt=" + createdAt +
                 ", updatedAt=" + updatedAt +

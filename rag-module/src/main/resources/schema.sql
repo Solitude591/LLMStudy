@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_document`
     `file_md5`        CHAR(32)              DEFAULT NULL COMMENT '文件内容 MD5，用于防止同一用户重复上传',
     `uploader`        VARCHAR(64)  NOT NULL COMMENT '上传者',
     `doc_url`         VARCHAR(512) NOT NULL DEFAULT '' COMMENT 'MinIO 存储路径（bucket/key）',
-    `doc_status`        VARCHAR(32)  NOT NULL DEFAULT 'init' COMMENT '文档状态：init-初始化, uploaded-已上传, converting-解析中, converted-已解析, chunked-已分块, vector_stored-已向量化',
+    `doc_status`        VARCHAR(32)  NOT NULL DEFAULT 'init' COMMENT '文档状态：init, uploaded, converting, converted, splitting, chunked, vectoring, vector_stored',
     `converted_doc_url` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '解析后的 markdown 文件 MinIO 路径',
     `visibility`      VARCHAR(16)  NOT NULL DEFAULT 'private' COMMENT '可见范围：private-仅自己可见, internal-内部可见, public-公开',
     `created_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -57,6 +57,23 @@ SET @file_md5_index_sql = IF(
 PREPARE file_md5_stmt FROM @file_md5_index_sql;
 EXECUTE file_md5_stmt;
 DEALLOCATE PREPARE file_md5_stmt;
+
+-- 兼容已存在的表：添加 error_message 字段用于记录处理失败的错误信息
+SET @error_message_column_exists = (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'knowledge_document'
+      AND COLUMN_NAME = 'error_message'
+);
+SET @error_message_column_sql = IF(
+    @error_message_column_exists = 0,
+    'ALTER TABLE `knowledge_document` ADD COLUMN `error_message` TEXT DEFAULT NULL COMMENT ''处理失败时的错误信息'' AFTER `converted_doc_url`',
+    'SELECT 1'
+);
+PREPARE error_message_stmt FROM @error_message_column_sql;
+EXECUTE error_message_stmt;
+DEALLOCATE PREPARE error_message_stmt;
 
 
 CREATE TABLE IF NOT EXISTS `knowledge_segment`

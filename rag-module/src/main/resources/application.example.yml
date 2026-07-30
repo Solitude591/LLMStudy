@@ -57,6 +57,14 @@ vision:
 mineru:
   token: ${MINERU_TOKEN}
 
+rag:
+  splitter:
+    markdown:
+      # 单个子分片最大字符数；一个标题章节超过该值时才生成父子分片
+      chunk-size: ${RAG_MARKDOWN_CHUNK_SIZE:1000}
+      # 相邻子分片重叠字符数，必须大于等于 0 且小于 chunk-size
+      chunk-overlap: ${RAG_MARKDOWN_CHUNK_OVERLAP:100}
+
 logging:
   level:
     com.llmstudy.rag: DEBUG

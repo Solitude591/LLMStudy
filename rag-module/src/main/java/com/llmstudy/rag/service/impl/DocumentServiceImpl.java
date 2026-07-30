@@ -7,7 +7,9 @@ import com.llmstudy.rag.dto.DocumentVO;
 import com.llmstudy.rag.dto.MineruContentElement;
 import com.llmstudy.rag.entity.KnowledgeDocument;
 import com.llmstudy.rag.enums.DocumentStatus;
+import com.llmstudy.rag.event.DocumentUploadedEvent;
 import com.llmstudy.rag.mapper.KnowledgeDocumentMapper;
+import com.llmstudy.rag.service.DocumentStageAlreadyRunningException;
 import com.llmstudy.rag.service.DocumentService;
 import com.llmstudy.rag.service.MarkdownImageProcessor;
 import com.llmstudy.rag.service.parser.DocumentParseContext;
@@ -17,6 +19,7 @@ import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -77,13 +80,17 @@ public class DocumentServiceImpl implements DocumentService {
     /** 将结构化 content_list 序列化为 JSON 后保存到 MinIO。 */
     private final JsonMapper objectMapper;
 
+    /** Spring 事件发布器；上传完成后发布 DocumentUploadedEvent 触发异步流水线。 */
+    private final ApplicationEventPublisher eventPublisher;
+
     public DocumentServiceImpl(MinioClient minioClient,
                                MinioProperties minioProperties,
                                KnowledgeDocumentMapper documentMapper,
                                DocumentParserRouter parserRouter,
                                VisionClient visionClient,
                                MarkdownImageProcessor imageProcessor,
-                               JsonMapper objectMapper) {
+                               JsonMapper objectMapper,
+                               ApplicationEventPublisher eventPublisher) {
         this.minioClient = minioClient;
         this.minioProperties = minioProperties;
         this.documentMapper = documentMapper;
@@ -91,6 +98,7 @@ public class DocumentServiceImpl implements DocumentService {
         this.visionClient = visionClient;
         this.imageProcessor = imageProcessor;
         this.objectMapper = objectMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -126,14 +134,16 @@ public class DocumentServiceImpl implements DocumentService {
         if (existing != null) {
             log.info("检测到重复文件，跳过 MinIO 上传: uploader={}, fileMd5={}, docId={}",
                     uploader, fileMd5, existing.getDocId());
-            // 重复上传仍可复用本次请求携带的文件流，给之前解析失败的记录补做解析。
-            return autoParseAfterUpload(existing, file, true);
+            // 已存在的文档无需重新上传，但需要触发异步处理以确保流水线完整执行。
+            fireUploadedEvent(existing.getDocId());
+            return toVO(existing, true);
         }
 
         // 标题与可见范围在 Service 再做一次兜底，避免非 HTTP 调用绕过 Controller 默认值。
         if (docTitle == null || docTitle.isBlank()) {
             docTitle = stripExtension(originalName);
         }
+        // todo 权限后面再做
         if (visibility == null || visibility.isBlank()) {
             visibility = "private";
         }
@@ -185,8 +195,9 @@ public class DocumentServiceImpl implements DocumentService {
             if (concurrentExisting != null) {
                 log.info("并发重复上传已拦截: uploader={}, fileMd5={}, docId={}",
                         uploader, fileMd5, concurrentExisting.getDocId());
-                // 另一个请求已完成落库时，当前请求的同内容文件仍可直接作为解析输入。
-                return autoParseAfterUpload(concurrentExisting, file, true);
+                // 并发胜出的文档已经落库，触发其异步处理流水线。
+                fireUploadedEvent(concurrentExisting.getDocId());
+                return toVO(concurrentExisting, true);
             }
             throw e;
         } catch (RuntimeException e) {
@@ -194,11 +205,11 @@ public class DocumentServiceImpl implements DocumentService {
             throw e;
         }
 
+        // 5. 上传完成后发布事件，由异步监听器接管后续解析、分片、向量化流程。
+        // 接口立即返回，不阻塞。前端通过轮询 GET /document/{docId} 的 docStatus 感知进度。
         log.info("文档记录创建成功: docId={}, title={}", docId, docTitle);
-
-        // 5. 上传完成后自动路由解析。PDF 会进入 MinerU，TXT 使用本地读取策略；
-        // 尚未注册解析器的格式只保留 uploaded 状态，不会调用 MinerU。
-        return autoParseAfterUpload(doc, file, false);
+        fireUploadedEvent(docId);
+        return toVO(doc, false);
     }
 
     @Override
@@ -207,7 +218,6 @@ public class DocumentServiceImpl implements DocumentService {
             throw new IllegalArgumentException("docId 不能为空");
         }
 
-        // 查询接口始终返回数据库中的最新状态和转换结果地址。
         KnowledgeDocument doc = documentMapper.findByDocId(docId);
         if (doc == null) {
             return null;
@@ -215,8 +225,59 @@ public class DocumentServiceImpl implements DocumentService {
         return toVO(doc);
     }
 
+    @Override
+    public boolean parseDocument(String docId) {
+        // 从数据库恢复文档记录：此时可能在上传后几秒才被异步线程调度到，
+        // 文档状态可能已被并发操作改变，parseUploadedDocument 内部会做 CAS 校验。
+        KnowledgeDocument doc = documentMapper.findByDocId(docId);
+        if (doc == null) {
+            throw new IllegalArgumentException("文档不存在: " + docId);
+        }
+        // 重复上传或迟到的 DocumentUploadedEvent 不应让已经推进的文档重新解析，
+        // 更不能在监听器的失败分支中把状态回退到 uploaded。
+        if (doc.getDocumentStatus() != DocumentStatus.UPLOADED) {
+            log.info("忽略重复上传事件，文档已经离开 uploaded 状态: docId={}, status={}",
+                    docId, doc.getDocStatus());
+            return false;
+        }
+        // 异步路径没有 MultipartFile——HTTP 请求结束流已关闭。
+        // sourceFile=null 通知策略从 MinIO 公网 URL（doc.docUrl）下载原文件。
+        parseUploadedDocument(doc, null);
+        return true;
+    }
+
     /**
-     * 消费上传请求中的当前文件并完成内部解析，不作为 Service 公共能力暴露。
+     * 发布上传完成事件，触发异步解析流水线。
+     *
+     * <p>对于未被任何解析策略支持的格式（如 .docx），不发布事件——
+     * 没有可解析的内容，后续分片和向量化也没有输入，空转流水线无意义。</p>
+     */
+    private void fireUploadedEvent(String docId) {
+        // 从 MySQL 重新加载完整记录，确保拿到 doc.fileType 和最新状态。
+        KnowledgeDocument doc = documentMapper.findByDocId(docId);
+        if (doc == null) {
+            return;
+        }
+        // 只对已注册解析策略的格式触发流水线。PDF → MinerU，TXT → 本地读取。
+        // 未注册格式（如 DOCX）保持 uploaded 状态，等待后续扩展新策略即可自动纳入。
+        if (!parserRouter.supports(doc.getFileType())) {
+            log.info("文件类型未注册解析策略，跳过解析流水线: docId={}, type={}",
+                    docId, doc.getFileType());
+            return;
+        }
+        if (doc.getDocumentStatus() != DocumentStatus.UPLOADED) {
+            log.info("重复文件已进入处理流程，不再发布上传事件: docId={}, status={}",
+                    docId, doc.getDocStatus());
+            return;
+        }
+        // Spring 事件默认同步执行，但 Listener 标注了 @Async，
+        // 因此 DocumentLifecycleListener.onDocumentUploaded 会在线程池中运行。
+        eventPublisher.publishEvent(new DocumentUploadedEvent(this, docId));
+    }
+
+    /**
+     * 执行文档解析。sourceFile 不为 null 时优先使用（同步路径），
+     * 为 null 时策略从 MinIO 下载（异步路径）。
      */
     private String parseUploadedDocument(KnowledgeDocument doc, MultipartFile sourceFile) {
         String docId = doc.getDocId();
@@ -231,7 +292,8 @@ public class DocumentServiceImpl implements DocumentService {
                 docId,
                 DocumentStatus.CONVERTING,
                 DocumentStatus.UPLOADED) != 1) {
-            throw new IllegalStateException("文档正在解析或状态已发生变化，请勿重复提交: " + docId);
+            throw new DocumentStageAlreadyRunningException(
+                    "文档解析阶段已经被其他线程抢占: " + docId);
         }
         log.info("开始解析文档: docId={}", docId);
 
@@ -301,13 +363,21 @@ public class DocumentServiceImpl implements DocumentService {
             log.error("文档解析失败，回滚状态并清理产物: docId={}", docId, e);
             // 只删除本次解析新写入的对象，原始文件仍保留；再次上传同内容文件即可重试。
             uploadedKeys.forEach(this::removeObjectQuietly);
-            // 仅允许 converting 回退到 uploaded，防止覆盖其他并发流程写入的新状态。
-            documentMapper.compareAndSetStatus(
+            // 仅允许 converting 回退到 uploaded，防止迟到的失败结果覆盖更新状态。
+            documentMapper.compareAndSetStatusWithError(
                     docId,
                     DocumentStatus.UPLOADED,
-                    DocumentStatus.CONVERTING);
+                    DocumentStatus.CONVERTING,
+                    truncateError("解析失败: " + e.getMessage()));
             throw new RuntimeException("文档解析失败: " + e.getMessage(), e);
         }
+    }
+
+    private String truncateError(String message) {
+        if (message == null) {
+            return "未知错误";
+        }
+        return message.length() <= 2000 ? message : message.substring(0, 2000) + "...";
     }
 
     /**
@@ -472,53 +542,6 @@ public class DocumentServiceImpl implements DocumentService {
                 .createdAt(doc.getCreatedAt())
                 .duplicate(duplicate)
                 .build();
-    }
-
-    /**
-     * 上传完成后按文件类型自动解析。
-     *
-     * <p>路由器只会选择已注册的策略，因此 PDF 才会进入 MinerU；
-     * TXT 等格式由自己的策略处理，DOCX 等暂未支持的格式保持 uploaded。</p>
-     */
-    private DocumentVO autoParseAfterUpload(KnowledgeDocument doc,
-                                            MultipartFile sourceFile,
-                                            boolean duplicate) {
-        // 未注册策略的格式只保存原始文件，不进入任何解析服务。
-        if (!parserRouter.supports(doc.getFileType())) {
-            log.info("当前文件类型未注册自动解析策略，跳过解析: docId={}, type={}",
-                    doc.getDocId(), doc.getFileType());
-            return toVO(doc, duplicate);
-        }
-
-        if (doc.getDocumentStatus() != DocumentStatus.UPLOADED) {
-            log.info("文档无需重复自动解析: docId={}, status={}",
-                    doc.getDocId(), doc.getDocStatus());
-            return toVO(doc, duplicate);
-        }
-
-        log.info("上传完成，开始自动解析: docId={}, type={}",
-                doc.getDocId(), doc.getFileType());
-        try {
-            // 直接使用本次上传的 MultipartFile，避免本地解析器再从 MinIO 下载原文件。
-            parseUploadedDocument(doc, sourceFile);
-        } catch (IllegalStateException concurrentStateChange) {
-            // 并发重复上传可能已经由另一个请求抢到解析权，此时返回最新状态即可。
-            KnowledgeDocument latest = documentMapper.findByDocId(doc.getDocId());
-            if (latest != null
-                    && (latest.getDocumentStatus() == DocumentStatus.CONVERTING
-                    || latest.getDocumentStatus() == DocumentStatus.CONVERTED)) {
-                log.info("文档已由其他请求接管解析: docId={}, status={}",
-                        latest.getDocId(), latest.getDocStatus());
-                return toVO(latest, duplicate);
-            }
-            throw concurrentStateChange;
-        }
-
-        KnowledgeDocument parsed = documentMapper.findByDocId(doc.getDocId());
-        if (parsed == null) {
-            throw new IllegalStateException("自动解析完成后文档记录不存在: " + doc.getDocId());
-        }
-        return toVO(parsed, duplicate);
     }
 
     private String calculateFileMd5(MultipartFile file) {

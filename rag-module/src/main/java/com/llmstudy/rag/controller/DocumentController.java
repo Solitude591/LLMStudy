@@ -96,6 +96,19 @@ public class DocumentController {
     }
 
     /**
+     * POST /document/{docId}/embed
+     *
+     * 将已分片的 segment 批量向量化并写入 Elasticsearch。
+     * 只处理 status='init' 且 skip_embedding=0 的 segment。
+     * 文档状态会流转为 vectoring → vector_stored。
+     */
+    @PostMapping("/{docId}/embed")
+    public ApiResult<Integer> embedSegments(@PathVariable String docId) {
+        int count = documentSegmentService.embedSegments(docId);
+        return ApiResult.ok("向量化完成", count);
+    }
+
+    /**
      * GET /document/list
      *
      * 按上传者查询文档列表（待完善分页）。

@@ -17,6 +17,9 @@ public class MarkdownSplitterProperties {
     /** 相邻子分片之间重复保留的字符数。 */
     private int chunkOverlap = 100;
 
+    /** 每次调用 Embedding API 批量发送的文本数上限，避免请求体过大或触发限流。 */
+    private int embeddingBatchSize = 10;
+
     public int getChunkSize() {
         return chunkSize;
     }
@@ -31,5 +34,13 @@ public class MarkdownSplitterProperties {
 
     public void setChunkOverlap(int chunkOverlap) {
         this.chunkOverlap = chunkOverlap;
+    }
+
+    public int getEmbeddingBatchSize() {
+        return embeddingBatchSize;
+    }
+
+    public void setEmbeddingBatchSize(int embeddingBatchSize) {
+        this.embeddingBatchSize = embeddingBatchSize;
     }
 }

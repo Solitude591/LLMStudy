@@ -5,9 +5,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "elasticsearch")
 public class ElasticsearchProperties {
 
-    private String host = "http://localhost:9200";
+    private String host;
 
-    private String indexName = "know-engine";
+    private String indexName;
 
     private String baseUrl;
 
@@ -15,7 +15,7 @@ public class ElasticsearchProperties {
 
     private String apiKey;
 
-    private int dimensions = 1536;
+    private int dimensions;
 
     public String getHost() {
         return host;

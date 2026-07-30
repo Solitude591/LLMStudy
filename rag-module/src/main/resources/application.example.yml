@@ -30,6 +30,14 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
 
+elasticsearch:
+  host: ${ELASTICSEARCH_URI:http://localhost:9200}
+  index-name: ${ELASTICSEARCH_VECTOR_INDEX:know-engine}
+  base-url: ${EMBEDDING_BASE_URL}
+  model-name: ${EMBEDDING_MODEL}
+  api-key: ${EMBEDDING_API_KEY}
+  dimensions: ${EMBEDDING_DIMENSIONS:1536}
+
 minio:
   endpoint: ${MINIO_ENDPOINT}
   access-key: ${MINIO_ACCESS_KEY}

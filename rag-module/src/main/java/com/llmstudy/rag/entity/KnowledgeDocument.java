@@ -45,6 +45,9 @@ public class KnowledgeDocument {
     /** 文档处理失败时的错误信息；成功时为 null。用于事件驱动流程中记录各阶段失败原因。 */
     private String errorMessage;
 
+    /** 自动补偿任务的重试次数；阶段处理成功时清零，达到上限后停止自动补偿。 */
+    private Integer retryCount;
+
     /** 文档可见范围，例如 private、internal、public。 */
     private String visibility;
 
@@ -167,6 +170,14 @@ public class KnowledgeDocument {
         this.errorMessage = errorMessage;
     }
 
+    public Integer getRetryCount() {
+        return retryCount;
+    }
+
+    public void setRetryCount(Integer retryCount) {
+        this.retryCount = retryCount;
+    }
+
     public String getVisibility() {
         return visibility;
     }
@@ -206,6 +217,7 @@ public class KnowledgeDocument {
                 ", docStatus='" + docStatus + '\'' +
                 ", convertedDocUrl='" + convertedDocUrl + '\'' +
                 ", errorMessage='" + errorMessage + '\'' +
+                ", retryCount=" + retryCount +
                 ", visibility='" + visibility + '\'' +
                 ", createdAt=" + createdAt +
                 ", updatedAt=" + updatedAt +

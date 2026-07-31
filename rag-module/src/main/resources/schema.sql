@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS `knowledge_document`
     `doc_url`         VARCHAR(512) NOT NULL DEFAULT '' COMMENT 'MinIO 存储路径（bucket/key）',
     `doc_status`        VARCHAR(32)  NOT NULL DEFAULT 'init' COMMENT '文档状态：init, uploaded, converting, converted, splitting, chunked, vectoring, vector_stored',
     `converted_doc_url` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '解析后的 markdown 文件 MinIO 路径',
+    `error_message`     TEXT                  DEFAULT NULL COMMENT '处理失败时的错误信息',
+    `retry_count`       INT          NOT NULL DEFAULT 0 COMMENT '自动补偿重试次数，达到上限后停止补偿等待人工处理',
     `visibility`      VARCHAR(16)  NOT NULL DEFAULT 'private' COMMENT '可见范围：private-仅自己可见, internal-内部可见, public-公开',
     `created_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -74,6 +76,23 @@ SET @error_message_column_sql = IF(
 PREPARE error_message_stmt FROM @error_message_column_sql;
 EXECUTE error_message_stmt;
 DEALLOCATE PREPARE error_message_stmt;
+
+-- 兼容已存在的表：添加 retry_count 字段用于记录自动补偿重试次数
+SET @retry_count_column_exists = (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'knowledge_document'
+      AND COLUMN_NAME = 'retry_count'
+);
+SET @retry_count_column_sql = IF(
+    @retry_count_column_exists = 0,
+    'ALTER TABLE `knowledge_document` ADD COLUMN `retry_count` INT NOT NULL DEFAULT 0 COMMENT ''自动补偿重试次数，达到上限后停止补偿等待人工处理'' AFTER `error_message`',
+    'SELECT 1'
+);
+PREPARE retry_count_stmt FROM @retry_count_column_sql;
+EXECUTE retry_count_stmt;
+DEALLOCATE PREPARE retry_count_stmt;
 
 
 CREATE TABLE IF NOT EXISTS `knowledge_segment`

@@ -58,6 +58,18 @@ mineru:
   token: ${MINERU_TOKEN}
 
 rag:
+  compensation:
+    # 补偿任务 cron 表达式，每 5 分钟扫描一次失败/卡死文档
+    cron: "0 */5 * * * ?"
+    # 单个文档最大自动重试次数，超过后停止自动补偿，等待人工处理
+    max-retry-count: 3
+    # 单轮最多补偿的文档数，防止一次性拉起大量失败文档
+    batch-size: 10
+    # 失败后的冷却时间，避免与原处理流程竞争
+    retry-delay: 5m
+    # 中间态（converting/splitting/vectoring）卡死判定阈值
+    stale-timeout: 30m
+
   splitter:
     markdown:
       # 单个子分片最大字符数；一个标题章节超过该值时才生成父子分片

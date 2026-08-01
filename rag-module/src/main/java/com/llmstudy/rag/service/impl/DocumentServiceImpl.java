@@ -10,7 +10,9 @@ import com.llmstudy.rag.enums.DocumentStatus;
 import com.llmstudy.rag.event.DocumentUploadedEvent;
 import com.llmstudy.rag.mapper.KnowledgeDocumentMapper;
 import com.llmstudy.rag.service.DocumentStageAlreadyRunningException;
+import com.llmstudy.rag.service.DocumentProcessingOutcome;
 import com.llmstudy.rag.service.DocumentService;
+import com.llmstudy.rag.service.ExcelImportService;
 import com.llmstudy.rag.service.MarkdownImageProcessor;
 import com.llmstudy.rag.service.parser.DocumentParseContext;
 import com.llmstudy.rag.service.parser.DocumentParserRouter;
@@ -52,9 +54,11 @@ public class DocumentServiceImpl implements DocumentService {
 
     /** 允许上传的文件类型 */
     private static final Set<String> ALLOWED_FILE_TYPES = Set.of(
-            "pdf", "doc", "docx", "txt", "md", "csv",
+            "pdf", "doc", "docx", "csv",
             "xls", "xlsx", "ppt", "pptx"
     );
+
+    private static final Set<String> EXCEL_FILE_TYPES = Set.of("xls", "xlsx");
 
     /** 最大文件大小：50MB */
     private static final long MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -68,8 +72,11 @@ public class DocumentServiceImpl implements DocumentService {
     /** 负责文档元数据查询、写入以及解析状态的原子更新。 */
     private final KnowledgeDocumentMapper documentMapper;
 
-    /** 根据文件扩展名把统一解析请求分发给 PDF、TXT 等具体解析器。 */
+    /** 根据文件扩展名把统一解析请求分发给 PDF、Word 等解析器。 */
     private final DocumentParserRouter parserRouter;
+
+    /** Excel 文档的独立结构化入库服务，不进入 RAG 分片链路。 */
+    private final ExcelImportService excelImportService;
 
     /** 对 MinerU 提取出的图片生成语义描述，供 Markdown 和后续分片使用。 */
     private final VisionClient visionClient;
@@ -90,6 +97,7 @@ public class DocumentServiceImpl implements DocumentService {
                                MinioProperties minioProperties,
                                KnowledgeDocumentMapper documentMapper,
                                DocumentParserRouter parserRouter,
+                               ExcelImportService excelImportService,
                                VisionClient visionClient,
                                MarkdownImageProcessor imageProcessor,
                                JsonMapper objectMapper,
@@ -99,6 +107,7 @@ public class DocumentServiceImpl implements DocumentService {
         this.minioProperties = minioProperties;
         this.documentMapper = documentMapper;
         this.parserRouter = parserRouter;
+        this.excelImportService = excelImportService;
         this.visionClient = visionClient;
         this.imageProcessor = imageProcessor;
         this.objectMapper = objectMapper;
@@ -107,7 +116,11 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     @Override
-    public DocumentVO uploadDocument(MultipartFile file, String docTitle, String uploader, String visibility) {
+    public DocumentVO uploadDocument(MultipartFile file,
+                                     String docTitle,
+                                     String uploader,
+                                     String visibility,
+                                     String tableName) {
         // 1. 参数校验
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("上传文件不能为空");
@@ -127,6 +140,9 @@ public class DocumentServiceImpl implements DocumentService {
             throw new IllegalArgumentException(
                     "不支持的文件类型: ." + fileType + "，仅支持: " + ALLOWED_FILE_TYPES);
         }
+        String targetTableName = EXCEL_FILE_TYPES.contains(fileType)
+                ? ExcelImportService.requireValidTableName(tableName)
+                : "";
         // 限制上传体积，防止单次请求过度占用应用内存、网络带宽和对象存储空间。
         if (fileSize > MAX_FILE_SIZE) {
             throw new IllegalArgumentException(
@@ -135,7 +151,9 @@ public class DocumentServiceImpl implements DocumentService {
 
         // 按“上传者 + 文件内容 MD5”去重，避免把其他用户的私有文档直接返回。
         String fileMd5 = calculateFileMd5(file);
-        KnowledgeDocument existing = documentMapper.findByUploaderAndFileMd5(uploader, fileMd5);
+        KnowledgeDocument existing =
+                documentMapper.findByUploaderAndFileMd5AndTargetTableName(
+                        uploader, fileMd5, targetTableName);
         if (existing != null) {
             log.info("检测到重复文件，跳过 MinIO 上传: uploader={}, fileMd5={}, docId={}",
                     uploader, fileMd5, existing.getDocId());
@@ -173,7 +191,7 @@ public class DocumentServiceImpl implements DocumentService {
             throw new RuntimeException("文件存储失败，请稍后重试", e);
         }
 
-        // 持久化可访问 URL，PDF 解析器会把该地址交给 MinerU 主动拉取原始文件。
+        // 持久化可访问 URL，MinerU 解析器会让服务端主动拉取原始文件。
         String docUrl = buildDocUrl(objectKey);
 
         // 4. 写 MySQL：knowledge_document 表
@@ -185,8 +203,10 @@ public class DocumentServiceImpl implements DocumentService {
         doc.setFileType(fileType);
         doc.setFileSize(fileSize);
         doc.setFileMd5(fileMd5);
+        doc.setTargetTableName(targetTableName);
         doc.setUploader(uploader);
         doc.setDocUrl(docUrl);
+        doc.setRawObjectKey(objectKey);
         // 文档状态统一通过枚举设置，数据库仍保存兼容现有数据的小写值。
         doc.setDocumentStatus(DocumentStatus.UPLOADED);
         doc.setVisibility(visibility);
@@ -196,7 +216,8 @@ public class DocumentServiceImpl implements DocumentService {
             // 并发上传相同内容时，唯一索引只允许一个请求成功；清理另一个请求的孤儿对象。
             removeObjectQuietly(objectKey);
             KnowledgeDocument concurrentExisting =
-                    documentMapper.findByUploaderAndFileMd5(uploader, fileMd5);
+                    documentMapper.findByUploaderAndFileMd5AndTargetTableName(
+                            uploader, fileMd5, targetTableName);
             if (concurrentExisting != null) {
                 log.info("并发重复上传已拦截: uploader={}, fileMd5={}, docId={}",
                         uploader, fileMd5, concurrentExisting.getDocId());
@@ -231,7 +252,7 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     @Override
-    public boolean parseDocument(String docId) {
+    public DocumentProcessingOutcome processDocument(String docId) {
         // 从数据库恢复文档记录：此时可能在上传后几秒才被异步线程调度到，
         // 文档状态可能已被并发操作改变，parseUploadedDocument 内部会做 CAS 校验。
         KnowledgeDocument doc = documentMapper.findByDocId(docId);
@@ -243,18 +264,21 @@ public class DocumentServiceImpl implements DocumentService {
         if (doc.getDocumentStatus() != DocumentStatus.UPLOADED) {
             log.info("忽略重复上传事件，文档已经离开 uploaded 状态: docId={}, status={}",
                     docId, doc.getDocStatus());
-            return false;
+            return DocumentProcessingOutcome.SKIPPED;
         }
-        // 异步路径没有 MultipartFile——HTTP 请求结束流已关闭。
-        // sourceFile=null 通知策略从 MinIO 公网 URL（doc.docUrl）下载原文件。
-        parseUploadedDocument(doc, null);
-        return true;
+
+        if (EXCEL_FILE_TYPES.contains(doc.getFileType())) {
+            excelImportService.importDocument(doc);
+            return DocumentProcessingOutcome.EXCEL_IMPORTED;
+        }
+        parseUploadedDocument(doc);
+        return DocumentProcessingOutcome.RAG_PARSED;
     }
 
     /**
      * 发布上传完成事件，触发异步解析流水线。
      *
-     * <p>对于未被任何解析策略支持的格式（如 .docx），不发布事件——
+     * <p>对于未被任何解析策略支持的格式，不发布事件——
      * 没有可解析的内容，后续分片和向量化也没有输入，空转流水线无意义。</p>
      */
     private void fireUploadedEvent(String docId) {
@@ -263,9 +287,10 @@ public class DocumentServiceImpl implements DocumentService {
         if (doc == null) {
             return;
         }
-        // 只对已注册解析策略的格式触发流水线。PDF → MinerU，TXT → 本地读取。
-        // 未注册格式（如 DOCX）保持 uploaded 状态，等待后续扩展新策略即可自动纳入。
-        if (!parserRouter.supports(doc.getFileType())) {
+        // 只对已注册解析策略的格式触发流水线。PDF/Word 统一交给 MinerU。
+        // 未注册格式保持 uploaded 状态，等待后续扩展新策略即可自动纳入。
+        if (!EXCEL_FILE_TYPES.contains(doc.getFileType())
+                && !parserRouter.supports(doc.getFileType())) {
             log.info("文件类型未注册解析策略，跳过解析流水线: docId={}, type={}",
                     docId, doc.getFileType());
             return;
@@ -281,10 +306,9 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     /**
-     * 执行文档解析。sourceFile 不为 null 时优先使用（同步路径），
-     * 为 null 时策略从 MinIO 下载（异步路径）。
+     * 执行文档解析。MinerU 根据数据库中的公网 docUrl 拉取原始文件。
      */
-    private String parseUploadedDocument(KnowledgeDocument doc, MultipartFile sourceFile) {
+    private String parseUploadedDocument(KnowledgeDocument doc) {
         String docId = doc.getDocId();
 
         // 上传流程已经持有完整文档记录，无需再根据 docId 查询一次数据库。
@@ -306,10 +330,9 @@ public class DocumentServiceImpl implements DocumentService {
         List<String> uploadedKeys = new ArrayList<>();
 
         try {
-            // 把当前上传文件直接透传给策略：TXT 读取该流，PDF 则使用 doc 中的公网 URL。
-            DocumentParseContext parseContext = new DocumentParseContext(doc, sourceFile);
+            DocumentParseContext parseContext = new DocumentParseContext(doc);
 
-            // 路由器依据扩展名选择策略，只有 PDF 策略会调用 MinerU。
+            // 路由器依据扩展名选择策略，所有策略统一返回 DocumentParseResult。
             DocumentParseResult parseResult = parserRouter.parse(parseContext);
             String markdown = parseResult.getMarkdown();
             if (markdown == null || markdown.isBlank()) {
@@ -414,7 +437,7 @@ public class DocumentServiceImpl implements DocumentService {
             if (image == null) {
                 // 继续生成 converted Markdown 会留下永久失效的相对链接，整次解析应当回滚。
                 throw new IllegalStateException(
-                        "MinerU 产物缺少 Markdown 引用的图片: " + rawPath);
+                        "解析产物缺少 Markdown 引用的图片: " + rawPath);
             }
 
             // 图片对象名使用路径哈希，既避免特殊字符问题，也防止清洗后同名图片互相覆盖。
@@ -539,6 +562,7 @@ public class DocumentServiceImpl implements DocumentService {
                 .fileType(doc.getFileType())
                 .fileSize(doc.getFileSize())
                 .fileMd5(doc.getFileMd5())
+                .targetTableName(doc.getTargetTableName())
                 .uploader(doc.getUploader())
                 .docUrl(doc.getDocUrl())
                 .docStatus(doc.getDocStatus())

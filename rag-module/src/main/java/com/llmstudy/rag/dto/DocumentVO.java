@@ -13,6 +13,7 @@ public class DocumentVO {
     private String fileType;
     private Long fileSize;
     private String fileMd5;
+    private String targetTableName;
     private String uploader;
     private String docUrl;
     private String docStatus;
@@ -31,6 +32,7 @@ public class DocumentVO {
         this.fileType = builder.fileType;
         this.fileSize = builder.fileSize;
         this.fileMd5 = builder.fileMd5;
+        this.targetTableName = builder.targetTableName;
         this.uploader = builder.uploader;
         this.docUrl = builder.docUrl;
         this.docStatus = builder.docStatus;
@@ -64,6 +66,9 @@ public class DocumentVO {
     public String getFileMd5() { return fileMd5; }
     public void setFileMd5(String fileMd5) { this.fileMd5 = fileMd5; }
 
+    public String getTargetTableName() { return targetTableName; }
+    public void setTargetTableName(String targetTableName) { this.targetTableName = targetTableName; }
+
     public String getUploader() { return uploader; }
     public void setUploader(String uploader) { this.uploader = uploader; }
 
@@ -94,6 +99,7 @@ public class DocumentVO {
         private String fileType;
         private Long fileSize;
         private String fileMd5;
+        private String targetTableName;
         private String uploader;
         private String docUrl;
         private String docStatus;
@@ -108,6 +114,7 @@ public class DocumentVO {
         public Builder fileType(String fileType) { this.fileType = fileType; return this; }
         public Builder fileSize(Long fileSize) { this.fileSize = fileSize; return this; }
         public Builder fileMd5(String fileMd5) { this.fileMd5 = fileMd5; return this; }
+        public Builder targetTableName(String targetTableName) { this.targetTableName = targetTableName; return this; }
         public Builder uploader(String uploader) { this.uploader = uploader; return this; }
         public Builder docUrl(String docUrl) { this.docUrl = docUrl; return this; }
         public Builder docStatus(String docStatus) { this.docStatus = docStatus; return this; }

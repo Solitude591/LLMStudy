@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG 文件上传测试</title>
+    <link rel="stylesheet" href="css/upload.css">
+</head>
+<body>
+<main class="page-shell">
+    <section class="upload-card">
+        <header class="card-header">
+            <p class="eyebrow">RAG MODULE</p>
+            <h1>文件上传测试</h1>
+            <p class="subtitle">测试 <code>POST /document/upload</code>，并查看接口原始响应。</p>
+        </header>
+
+        <form id="uploadForm" novalidate>
+            <label class="field full-width">
+                <span>接口地址</span>
+                <input id="endpoint" type="url" required autocomplete="url">
+            </label>
+
+            <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="选择上传文件">
+                <input id="file" name="file" type="file"
+                       accept=".pdf,.doc,.docx,.csv,.xls,.xlsx,.ppt,.pptx" hidden>
+                <div class="file-icon" aria-hidden="true">↑</div>
+                <strong id="fileTitle">点击选择或拖拽文件到这里</strong>
+                <span id="fileHint">支持 PDF、Word、CSV、Excel、PPT，最大 50MB</span>
+            </div>
+
+            <div class="form-grid">
+                <label class="field">
+                    <span>上传者 <em>*</em></span>
+                    <input id="uploader" name="uploader" type="text" value="test-user" required
+                           maxlength="64" placeholder="例如：test-user">
+                </label>
+
+                <label class="field">
+                    <span>文档标题</span>
+                    <input id="docTitle" name="docTitle" type="text" placeholder="留空时使用原文件名">
+                </label>
+
+                <label class="field">
+                    <span>可见范围</span>
+                    <select id="visibility" name="visibility">
+                        <option value="private">private</option>
+                        <option value="internal">internal</option>
+                        <option value="public">public</option>
+                    </select>
+                </label>
+
+                <label id="tableNameField" class="field is-disabled">
+                    <span>Excel 目标表名 <em id="tableRequired">*</em></span>
+                    <input id="tableName" name="tableName" type="text" disabled maxlength="48"
+                           pattern="[a-z][a-z0-9_]{0,47}" placeholder="例如：sales_data">
+                    <small>仅 Excel 必填：小写字母开头，只能包含小写字母、数字、下划线。</small>
+                </label>
+            </div>
+
+            <div id="errorMessage" class="message error-message" role="alert" hidden></div>
+
+            <div class="actions">
+                <button id="submitButton" class="primary-button" type="submit">开始上传</button>
+                <button id="resetButton" class="secondary-button" type="button">重置</button>
+            </div>
+
+            <div id="progressPanel" class="progress-panel" hidden>
+                <div class="progress-copy">
+                    <span id="progressText">正在上传...</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="progress-track">
+                    <div id="progressBar" class="progress-bar"></div>
+                </div>
+            </div>
+        </form>
+    </section>
+
+    <section class="response-card">
+        <div class="response-header">
+            <div>
+                <p class="eyebrow">RESPONSE</p>
+                <h2>接口响应</h2>
+            </div>
+            <button id="queryButton" class="secondary-button compact" type="button" disabled>查询最新状态</button>
+        </div>
+        <div id="responseMeta" class="response-meta">尚未发起请求</div>
+        <pre id="responseOutput">等待上传...</pre>
+    </section>
+</main>
+
+<script src="js/upload.js" defer></script>
+</body>
+</html>

@@ -29,8 +29,8 @@ public class DocumentController {
     /**
      * POST /document/upload
      *
-     * 上传文件到 MinIO、创建文档元数据记录，并按文件类型自动解析。
-     * PDF 使用 MinerU，TXT 使用本地读取策略，未注册策略的格式仅完成上传。
+     * 上传文件到 MinIO、创建文档元数据记录，并按文件类型自动处理。
+     * PDF/Word 使用 MinerU；Excel 按 Sheet 创建 MySQL 表并导入数据。
      * 请求格式：multipart/form-data
      *
      * 参数：
@@ -38,6 +38,7 @@ public class DocumentController {
      * - docTitle:   选填，文档标题（不填则取原始文件名）
      * - uploader:   必填，上传者标识
      * - visibility: 选填，可见范围（private / internal / public），默认 private
+     * - tableName:  Excel 必填，目标 MySQL 基础表名
      */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResult<DocumentVO> upload(
@@ -45,16 +46,18 @@ public class DocumentController {
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "docTitle", required = false) String docTitle,
             @RequestParam("uploader") String uploader,
-            @RequestParam(value = "visibility", defaultValue = "private") String visibility) {
+            @RequestParam(value = "visibility", defaultValue = "private") String visibility,
+            @RequestParam(value = "tableName", required = false) String tableName) {
 
         // Controller 只负责接收请求和包装响应；校验、去重、存储、落库及自动解析均由 Service 完成。
-        DocumentVO vo = documentService.uploadDocument(file, docTitle, uploader, visibility);
+        DocumentVO vo = documentService.uploadDocument(
+                file, docTitle, uploader, visibility, tableName);
         // 重复上传会复用已有文档记录，因此仍返回成功响应，但通过提示语和 duplicate 字段告知前端。
         String message;
         if (vo.isDuplicate()) {
             message = "文件已上传过";
-        }  else {
-            message = "上传成功，文档解析中";
+        } else {
+            message = "上传成功，文档处理中";
         }
         return ApiResult.ok(message, vo);
     }

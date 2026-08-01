@@ -12,6 +12,8 @@ public enum DocumentStatus {
 
     INIT("init"),
     UPLOADED("uploaded"),
+    IMPORTING("importing"),
+    IMPORTED("imported"),
     CONVERTING("converting"),
     CONVERTED("converted"),
     SPLITTING("splitting"),

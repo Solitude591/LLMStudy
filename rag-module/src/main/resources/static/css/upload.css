@@ -1,0 +1,358 @@
+:root {
+    color-scheme: light;
+    --page-bg: #f4f6f8;
+    --card-bg: #ffffff;
+    --text: #18222f;
+    --muted: #667386;
+    --line: #dce2e8;
+    --primary: #176b5b;
+    --primary-hover: #105648;
+    --primary-soft: #e9f4f1;
+    --danger: #b42318;
+    --danger-soft: #fff1f0;
+    --shadow: 0 18px 55px rgba(24, 34, 47, 0.08);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    background:
+            radial-gradient(circle at top left, rgba(23, 107, 91, 0.10), transparent 32rem),
+            var(--page-bg);
+    color: var(--text);
+    font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+button,
+input,
+select {
+    font: inherit;
+}
+
+.page-shell {
+    width: min(1120px, calc(100% - 32px));
+    margin: 48px auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+    gap: 24px;
+    align-items: start;
+}
+
+.upload-card,
+.response-card {
+    background: var(--card-bg);
+    border: 1px solid rgba(220, 226, 232, 0.85);
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+}
+
+.upload-card {
+    padding: 34px;
+}
+
+.response-card {
+    padding: 28px;
+    position: sticky;
+    top: 24px;
+}
+
+.card-header {
+    margin-bottom: 28px;
+}
+
+.eyebrow {
+    margin: 0 0 8px;
+    color: var(--primary);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+}
+
+h1,
+h2,
+p {
+    margin-top: 0;
+}
+
+h1 {
+    margin-bottom: 10px;
+    font-size: clamp(28px, 4vw, 40px);
+    letter-spacing: -0.035em;
+}
+
+h2 {
+    margin-bottom: 0;
+    font-size: 22px;
+}
+
+.subtitle {
+    margin-bottom: 0;
+    color: var(--muted);
+    line-height: 1.6;
+}
+
+code {
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: var(--primary-soft);
+    color: var(--primary);
+}
+
+.full-width {
+    display: block;
+    margin-bottom: 18px;
+}
+
+.field > span {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.field em {
+    color: var(--danger);
+    font-style: normal;
+}
+
+.field input,
+.field select {
+    width: 100%;
+    height: 44px;
+    padding: 0 13px;
+    color: var(--text);
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    outline: none;
+    transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.field input:focus,
+.field select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(23, 107, 91, 0.12);
+}
+
+.field input:disabled {
+    cursor: not-allowed;
+    background: #f3f5f7;
+}
+
+.field small {
+    display: block;
+    margin-top: 7px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.is-disabled {
+    opacity: 0.62;
+}
+
+.drop-zone {
+    min-height: 176px;
+    margin-bottom: 24px;
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    text-align: center;
+    border: 1.5px dashed #aeb9c5;
+    border-radius: 16px;
+    background: #fafbfc;
+    cursor: pointer;
+    transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.drop-zone:hover,
+.drop-zone:focus,
+.drop-zone.is-dragging {
+    border-color: var(--primary);
+    background: var(--primary-soft);
+    outline: none;
+    transform: translateY(-1px);
+}
+
+.file-icon {
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    font-size: 24px;
+    font-weight: 500;
+}
+
+#fileHint {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+}
+
+.actions {
+    margin-top: 28px;
+    display: flex;
+    gap: 12px;
+}
+
+button {
+    min-height: 42px;
+    padding: 0 18px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-weight: 750;
+    transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+button:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.primary-button {
+    color: #fff;
+    background: var(--primary);
+}
+
+.primary-button:hover:not(:disabled) {
+    background: var(--primary-hover);
+}
+
+.secondary-button {
+    color: var(--text);
+    background: #fff;
+    border-color: var(--line);
+}
+
+.secondary-button:hover:not(:disabled) {
+    border-color: #aeb9c5;
+    background: #f8fafb;
+}
+
+.compact {
+    min-height: 36px;
+    padding: 0 12px;
+    font-size: 13px;
+}
+
+.message {
+    margin-top: 18px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.error-message {
+    color: var(--danger);
+    background: var(--danger-soft);
+    border: 1px solid #f4c7c3;
+}
+
+.progress-panel {
+    margin-top: 22px;
+}
+
+.progress-copy {
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.progress-track {
+    height: 8px;
+    overflow: hidden;
+    border-radius: 99px;
+    background: #e9edf1;
+}
+
+.progress-bar {
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--primary);
+    transition: width 120ms linear;
+}
+
+.response-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+}
+
+.response-meta {
+    margin: 20px 0 10px;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+pre {
+    min-height: 360px;
+    max-height: 620px;
+    margin: 0;
+    padding: 18px;
+    overflow: auto;
+    border-radius: 12px;
+    background: #111923;
+    color: #dce8e5;
+    font: 13px/1.65 "SFMono-Regular", Consolas, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 860px) {
+    .page-shell {
+        grid-template-columns: 1fr;
+        margin: 24px auto;
+    }
+
+    .response-card {
+        position: static;
+    }
+}
+
+@media (max-width: 560px) {
+    .page-shell {
+        width: min(100% - 20px, 1120px);
+    }
+
+    .upload-card,
+    .response-card {
+        padding: 22px;
+        border-radius: 16px;
+    }
+
+    .form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .actions,
+    .response-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+}

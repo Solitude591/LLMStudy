@@ -6,12 +6,12 @@ import java.util.Map;
 /**
  * 不同文档解析策略的统一输出。
  *
- * <p>PDF 策略会返回 Markdown、结构化 content_list 和图片；TXT 策略只返回文本内容。
- * 服务层统一消费该模型并负责图片上传、Markdown 改写以及结果持久化。</p>
+ * <p>MinerU 策略返回 Markdown、结构化 content_list 和图片，服务层统一消费
+ * 该模型并负责图片上传、Markdown 改写以及结果持久化。</p>
  */
 public class DocumentParseResult {
 
-    /** 解析后的 Markdown 或可直接作为 Markdown 保存的纯文本 */
+    /** 解析后的 Markdown */
     private final String markdown;
 
     /** 结构化内容元素；不支持结构提取的策略返回空列表 */
@@ -26,10 +26,6 @@ public class DocumentParseResult {
         this.markdown = markdown;
         this.contentList = contentList == null ? List.of() : List.copyOf(contentList);
         this.images = images == null ? Map.of() : Map.copyOf(images);
-    }
-
-    public static DocumentParseResult text(String content) {
-        return new DocumentParseResult(content, List.of(), Map.of());
     }
 
     public String getMarkdown() {

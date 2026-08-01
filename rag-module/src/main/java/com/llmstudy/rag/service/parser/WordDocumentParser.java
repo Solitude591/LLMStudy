@@ -6,14 +6,14 @@ import org.springframework.stereotype.Component;
 import java.util.Set;
 
 /**
- * PDF 解析策略：使用 MinerU 生成 Markdown、content_list 和图片。
+ * Word 解析策略：DOC 和 DOCX 均复用 MinerU 文档解析流程。
  */
 @Component
-public class PdfDocumentParser extends AbstractMineruDocumentParser {
+public class WordDocumentParser extends AbstractMineruDocumentParser {
 
-    private static final Set<String> SUPPORTED_TYPES = Set.of("pdf");
+    private static final Set<String> SUPPORTED_TYPES = Set.of("doc", "docx");
 
-    public PdfDocumentParser(MineruClient mineruClient) {
+    public WordDocumentParser(MineruClient mineruClient) {
         super(mineruClient);
     }
 
@@ -21,5 +21,4 @@ public class PdfDocumentParser extends AbstractMineruDocumentParser {
     public Set<String> supportedFileTypes() {
         return SUPPORTED_TYPES;
     }
-
 }

@@ -85,6 +85,13 @@
             <version>0.29.0</version>
         </dependency>
 
+        <!-- EasyExcel：Excel 流式解析（xls/xlsx），SAX 模式逐行读取，避免大文件整表加载撑爆内存 -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>easyexcel</artifactId>
+            <version>4.0.3</version>
+        </dependency>
+
         <!--
             LangChain4j 核心能力：后续用于文档切分、Embedding、RAG 与 AI Service。
             暂不引入 Spring Boot 自动配置 Starter，避免和项目现有 Spring AI Bean 冲突。
@@ -100,6 +107,7 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
     </dependencies>
 
     <dependencyManagement>
@@ -120,6 +128,7 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+
         </dependencies>
     </dependencyManagement>
 

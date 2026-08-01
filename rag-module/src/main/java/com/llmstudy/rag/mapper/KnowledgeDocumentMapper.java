@@ -24,11 +24,15 @@ public interface KnowledgeDocumentMapper {
 
     @Select("""
             SELECT * FROM knowledge_document
-            WHERE uploader = #{uploader} AND file_md5 = #{fileMd5}
+            WHERE uploader = #{uploader}
+              AND file_md5 = #{fileMd5}
+              AND target_table_name = #{targetTableName}
             LIMIT 1
             """)
-    KnowledgeDocument findByUploaderAndFileMd5(@Param("uploader") String uploader,
-                                               @Param("fileMd5") String fileMd5);
+    KnowledgeDocument findByUploaderAndFileMd5AndTargetTableName(
+            @Param("uploader") String uploader,
+            @Param("fileMd5") String fileMd5,
+            @Param("targetTableName") String targetTableName);
 
     @Select("SELECT * FROM knowledge_document WHERE uploader = #{uploader} ORDER BY created_at DESC")
     List<KnowledgeDocument> findByUploader(@Param("uploader") String uploader);
@@ -108,10 +112,10 @@ public interface KnowledgeDocumentMapper {
     @Insert("""
             INSERT INTO knowledge_document
             (doc_id, doc_title, original_name, file_type, file_size, file_md5,
-             uploader, doc_url, doc_status, visibility)
+             target_table_name, uploader, doc_url, raw_object_key, doc_status, visibility)
             VALUES
             (#{docId}, #{docTitle}, #{originalName}, #{fileType}, #{fileSize}, #{fileMd5},
-             #{uploader}, #{docUrl}, #{docStatus}, #{visibility})
+             #{targetTableName}, #{uploader}, #{docUrl}, #{rawObjectKey}, #{docStatus}, #{visibility})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(KnowledgeDocument doc);
@@ -122,7 +126,9 @@ public interface KnowledgeDocumentMapper {
                 original_name = #{originalName},
                 file_type     = #{fileType},
                 file_size     = #{fileSize},
+                target_table_name = #{targetTableName},
                 doc_url       = #{docUrl},
+                raw_object_key = #{rawObjectKey},
                 doc_status    = #{docStatus},
                 visibility    = #{visibility}
             WHERE doc_id = #{docId}

@@ -18,9 +18,14 @@ public interface DocumentService {
      * @param docTitle   文档标题（可选，默认取原始文件名）
      * @param uploader   上传者
      * @param visibility 可见范围
+     * @param tableName  Excel 目标 MySQL 基础表名；非 Excel 可为空
      * @return 文档响应对象（status=uploaded）
      */
-    DocumentVO uploadDocument(MultipartFile file, String docTitle, String uploader, String visibility);
+    DocumentVO uploadDocument(MultipartFile file,
+                              String docTitle,
+                              String uploader,
+                              String visibility,
+                              String tableName);
 
     /**
      * 根据 doc_id 查询文档元数据。
@@ -31,18 +36,15 @@ public interface DocumentService {
     DocumentVO getDocument(String docId);
 
     /**
-     * 异步解析文档（供事件监听器调用）。
+     * 异步处理上传文档（供事件监听器调用）。
      *
-     * <p>从数据库读取文档记录，通过解析路由器按文件类型分发到具体策略。
-     * 解析产物（Markdown、图片、content_list.json）上传到 MinIO，
-     * 完成后更新状态为 converted 并回填 converted_doc_url。</p>
+     * <p>Excel 按 Sheet 导入 MySQL 并终止流水线；PDF/Word 交给
+     * MinerU 解析为 Markdown，继续后续分片与向量化。</p>
      *
-     * <p>与上传时的同步解析不同，此方法不持有 MultipartFile 文件流，
-     * TXT 等本地策略会从 MinIO 下载原始文件。</p>
+     * <p>MinerU 使用文档的公网 docUrl 拉取原始文件。</p>
      *
      * @param docId 文档业务 ID
-     * @return true 表示本次调用完成了解析；false 表示文档已经离开 uploaded 状态，
-     *         当前事件属于重复或迟到事件
+     * @return 本次处理结果，决定监听器是否发布后续 RAG 事件
      */
-    boolean parseDocument(String docId);
+    DocumentProcessingOutcome processDocument(String docId);
 }

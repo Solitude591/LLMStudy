@@ -30,11 +30,17 @@ public class KnowledgeDocument {
     /** 原始文件内容的 MD5，用于在同一上传者范围内判断文件是否重复。 */
     private String fileMd5;
 
+    /** Excel 导入时用户指定的第一张物理表名；非 Excel 文档为空字符串。 */
+    private String targetTableName;
+
     /** 上传者标识；当前由请求参数传入，接入登录体系后应取当前登录用户。 */
     private String uploader;
 
-    /** 原始文件在 MinIO 中的可访问地址，也是 PDF 提交给 MinerU 时使用的地址。 */
+    /** 原始文件在 MinIO 中的可访问地址，也是 MinerU 解析策略使用的文件地址。 */
     private String docUrl;
+
+    /** 原始文件在 MinIO 中的 object key，供内部 SDK 直接读取。 */
+    private String rawObjectKey;
 
     /** 数据库中的文档状态字符串；业务代码通过 DocumentStatus 访问。 */
     private String docStatus;
@@ -113,6 +119,14 @@ public class KnowledgeDocument {
         this.fileMd5 = fileMd5;
     }
 
+    public String getTargetTableName() {
+        return targetTableName;
+    }
+
+    public void setTargetTableName(String targetTableName) {
+        this.targetTableName = targetTableName;
+    }
+
     public String getUploader() {
         return uploader;
     }
@@ -127,6 +141,14 @@ public class KnowledgeDocument {
 
     public void setDocUrl(String docUrl) {
         this.docUrl = docUrl;
+    }
+
+    public String getRawObjectKey() {
+        return rawObjectKey;
+    }
+
+    public void setRawObjectKey(String rawObjectKey) {
+        this.rawObjectKey = rawObjectKey;
     }
 
     public String getDocStatus() {
@@ -212,8 +234,10 @@ public class KnowledgeDocument {
                 ", fileType='" + fileType + '\'' +
                 ", fileSize=" + fileSize +
                 ", fileMd5='" + fileMd5 + '\'' +
+                ", targetTableName='" + targetTableName + '\'' +
                 ", uploader='" + uploader + '\'' +
                 ", docUrl='" + docUrl + '\'' +
+                ", rawObjectKey='" + rawObjectKey + '\'' +
                 ", docStatus='" + docStatus + '\'' +
                 ", convertedDocUrl='" + convertedDocUrl + '\'' +
                 ", errorMessage='" + errorMessage + '\'' +

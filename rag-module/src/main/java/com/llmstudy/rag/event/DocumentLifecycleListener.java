@@ -3,6 +3,7 @@ package com.llmstudy.rag.event;
 import com.llmstudy.rag.dto.DocumentSplitResult;
 import com.llmstudy.rag.service.DocumentSegmentService;
 import com.llmstudy.rag.service.DocumentStageAlreadyRunningException;
+import com.llmstudy.rag.service.DocumentProcessingOutcome;
 import com.llmstudy.rag.service.DocumentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,12 +67,14 @@ public class DocumentLifecycleListener {
         log.info("收到文档上传事件，开始异步解析: docId={}", docId);
 
         try {
-            // 调用 DocumentService.parseDocument，内部通过解析路由器按文件类型分发：
-            // PDF → MineruClient（提交任务+轮询+下载 ZIP）；TXT → TxtDocumentParser。
-            // 此时请求线程已释放，策略侧从数据库中的 docUrl（MinIO 公网地址）读取文件。
-            boolean parsed = documentService.parseDocument(docId);
-            if (!parsed) {
+            // Excel 导入 MySQL 后直接结束；PDF/Word 解析为 Markdown 后继续 RAG 流水线。
+            DocumentProcessingOutcome outcome = documentService.processDocument(docId);
+            if (outcome == DocumentProcessingOutcome.SKIPPED) {
                 log.info("忽略重复或迟到的文档上传事件: docId={}", docId);
+                return;
+            }
+            if (outcome == DocumentProcessingOutcome.EXCEL_IMPORTED) {
+                log.info("Excel 结构化导入完成，不进入分片和向量化: docId={}", docId);
                 return;
             }
 
@@ -84,7 +87,7 @@ public class DocumentLifecycleListener {
             log.info("忽略重复的文档上传事件: docId={}, reason={}", docId, e.getMessage());
         } catch (Exception e) {
             log.error("异步解析失败: docId={}", docId, e);
-            // parseDocument 已使用 converting -> uploaded 的 CAS 记录失败，
+            // processDocument 已使用当前执行态 -> uploaded 的 CAS 记录失败，
             // 监听器不再无条件覆盖文档状态。
         }
     }

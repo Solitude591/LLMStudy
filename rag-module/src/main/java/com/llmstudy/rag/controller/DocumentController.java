@@ -53,12 +53,8 @@ public class DocumentController {
         String message;
         if (vo.isDuplicate()) {
             message = "文件已上传过";
-        } else if (DocumentStatus.CONVERTED.matches(vo.getDocStatus())) {
-            message = "上传并解析完成";
-        } else if (DocumentStatus.CONVERTING.matches(vo.getDocStatus())) {
+        }  else {
             message = "上传成功，文档解析中";
-        } else {
-            message = "上传成功，当前格式无需自动解析";
         }
         return ApiResult.ok(message, vo);
     }

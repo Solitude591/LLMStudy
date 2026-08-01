@@ -14,6 +14,7 @@ import com.llmstudy.rag.service.DocumentService;
 import com.llmstudy.rag.service.MarkdownImageProcessor;
 import com.llmstudy.rag.service.parser.DocumentParseContext;
 import com.llmstudy.rag.service.parser.DocumentParserRouter;
+import com.llmstudy.rag.util.SnowflakeIdGenerator;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
@@ -36,7 +37,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 
 @Service
 public class DocumentServiceImpl implements DocumentService {
@@ -83,6 +83,9 @@ public class DocumentServiceImpl implements DocumentService {
     /** Spring 事件发布器；上传完成后发布 DocumentUploadedEvent 触发异步流水线。 */
     private final ApplicationEventPublisher eventPublisher;
 
+    /** 生成文档唯一 ID（雪花算法），替代随机 UUID 以获得对 MySQL 索引友好的有序 ID。 */
+    private final SnowflakeIdGenerator idGenerator;
+
     public DocumentServiceImpl(MinioClient minioClient,
                                MinioProperties minioProperties,
                                KnowledgeDocumentMapper documentMapper,
@@ -90,7 +93,8 @@ public class DocumentServiceImpl implements DocumentService {
                                VisionClient visionClient,
                                MarkdownImageProcessor imageProcessor,
                                JsonMapper objectMapper,
-                               ApplicationEventPublisher eventPublisher) {
+                               ApplicationEventPublisher eventPublisher,
+                               SnowflakeIdGenerator idGenerator) {
         this.minioClient = minioClient;
         this.minioProperties = minioProperties;
         this.documentMapper = documentMapper;
@@ -99,6 +103,7 @@ public class DocumentServiceImpl implements DocumentService {
         this.imageProcessor = imageProcessor;
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
+        this.idGenerator = idGenerator;
     }
 
     @Override
@@ -148,8 +153,8 @@ public class DocumentServiceImpl implements DocumentService {
             visibility = "private";
         }
 
-        // 2. 生成 doc_id
-        String docId = UUID.randomUUID().toString().replace("-", "");
+        // 2. 生成 doc_id（雪花算法，本地生成、趋势递增，对 MySQL 聚簇索引友好）
+        String docId = String.valueOf(idGenerator.nextId());
 
         // 3. 上传原始文件到 MinIO（{docId}/raw/{originalName}）
         // 对象键按文档隔离，后续解析产物也会落在同一个 docId 前缀下，便于统一清理。

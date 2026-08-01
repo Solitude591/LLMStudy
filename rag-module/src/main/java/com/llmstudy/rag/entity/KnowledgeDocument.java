@@ -12,7 +12,7 @@ public class KnowledgeDocument {
     /** MySQL 自增主键，仅用于数据库内部关联，不作为对外暴露的文档标识。 */
     private Long id;
 
-    /** 业务文档 ID，上传时生成的无横线 UUID，贯穿 MinIO 路径、解析和分片流程。 */
+    /** 业务文档 ID，上传时由雪花算法生成，贯穿 MinIO 路径、解析和分片流程。 */
     private String docId;
 
     /** 展示给用户的文档标题；上传时未指定则使用去掉扩展名后的原文件名。 */

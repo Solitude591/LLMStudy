@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS `knowledge_document`
 (
     `id`              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    `doc_id`          CHAR(32)     NOT NULL COMMENT '文档唯一标识（UUID，去掉横线）',
+    `doc_id`          BIGINT       NOT NULL COMMENT '文档唯一标识（雪花算法生成）',
     `doc_title`       VARCHAR(255) NOT NULL COMMENT '文档标题',
     `original_name`   VARCHAR(255) NOT NULL COMMENT '原始文件名',
     `file_type`       VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '文件类型（pdf、docx、txt 等）',
@@ -98,9 +98,9 @@ DEALLOCATE PREPARE retry_count_stmt;
 CREATE TABLE IF NOT EXISTS `knowledge_segment`
 (
     `id`             BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    `chunk_id`       CHAR(32)     NOT NULL COMMENT '片段唯一标识（UUID，去掉横线）',
+    `chunk_id`       BIGINT       NOT NULL COMMENT '片段唯一标识（雪花算法生成）',
     `text`           LONGTEXT     NOT NULL COMMENT '片段文本内容',
-    `doc_id`         CHAR(32)     NOT NULL COMMENT '所属文档ID，关联 knowledge_document.doc_id',
+    `doc_id`         BIGINT       NOT NULL COMMENT '所属文档ID，关联 knowledge_document.doc_id',
     `chunk_order`    INT          NOT NULL DEFAULT 0 COMMENT '文档内分片顺序，从0开始',
     `embedding_id`   VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'ES 中的向量文档 ID',
     `status`         VARCHAR(32)  NOT NULL DEFAULT 'init' COMMENT '片段状态：init-初始化, vector_stored-已向量化',

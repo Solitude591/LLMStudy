@@ -1,6 +1,7 @@
 package com.llmstudy.rag.config;
 
 import com.llmstudy.rag.service.splitter.MarkdownHeaderParentTextSplitter;
+import com.llmstudy.rag.util.SnowflakeIdGenerator;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,8 +18,10 @@ public class SplitterConfig {
      */
     @Bean
     public MarkdownHeaderParentTextSplitter markdownHeaderParentTextSplitter(
-            MarkdownSplitterProperties properties) {
+            MarkdownSplitterProperties properties,
+            SnowflakeIdGenerator idGenerator) {
         return new MarkdownHeaderParentTextSplitter(
+                idGenerator,
                 properties.getChunkSize(),
                 properties.getChunkOverlap());
     }

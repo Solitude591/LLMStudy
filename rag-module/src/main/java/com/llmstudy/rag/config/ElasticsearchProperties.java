@@ -7,7 +7,7 @@ public class ElasticsearchProperties {
 
     private String host;
 
-    private String indexName;
+    private String indexName = "know-engine";
 
     private String baseUrl;
 

@@ -6,6 +6,7 @@ import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.data.segment.TextSegment;
 import com.llmstudy.rag.enums.ChunkType;
+import com.llmstudy.rag.util.SnowflakeIdGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,7 +14,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -70,15 +70,19 @@ public class MarkdownHeaderParentTextSplitter implements DocumentSplitter {
     private final int chunkSize;
     private final int chunkOverlap;
 
-    public MarkdownHeaderParentTextSplitter() {
-        this(DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP);
+    /** 生成分片唯一 ID（雪花算法），替代随机 UUID 以获得对 MySQL 索引友好的有序 ID。 */
+    private final SnowflakeIdGenerator idGenerator;
+
+    public MarkdownHeaderParentTextSplitter(SnowflakeIdGenerator idGenerator) {
+        this(idGenerator, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP);
     }
 
-    public MarkdownHeaderParentTextSplitter(int chunkSize) {
-        this(chunkSize, Math.min(DEFAULT_CHUNK_OVERLAP, Math.max(0, chunkSize / 10)));
+    public MarkdownHeaderParentTextSplitter(SnowflakeIdGenerator idGenerator, int chunkSize) {
+        this(idGenerator, chunkSize, Math.min(DEFAULT_CHUNK_OVERLAP, Math.max(0, chunkSize / 10)));
     }
 
-    public MarkdownHeaderParentTextSplitter(int chunkSize, int chunkOverlap) {
+    public MarkdownHeaderParentTextSplitter(SnowflakeIdGenerator idGenerator,
+                                            int chunkSize, int chunkOverlap) {
         if (chunkSize <= 0) {
             throw new IllegalArgumentException("chunkSize 必须大于 0");
         }
@@ -87,6 +91,7 @@ public class MarkdownHeaderParentTextSplitter implements DocumentSplitter {
         }
         this.chunkSize = chunkSize;
         this.chunkOverlap = chunkOverlap;
+        this.idGenerator = idGenerator;
     }
 
     @Override
@@ -343,8 +348,9 @@ public class MarkdownHeaderParentTextSplitter implements DocumentSplitter {
     }
 
     private String nextChunkId() {
-        // 数据库 chunk_id 为 CHAR(32)，因此使用去横线 UUID。
-        return UUID.randomUUID().toString().replace("-", "");
+        // 数据库 chunk_id 为 BIGINT，雪花 ID 以字符串形式传递，
+        // 避免 JSON 序列化时超出 JS 安全整数范围导致前端精度丢失。
+        return String.valueOf(idGenerator.nextId());
     }
 
     private record MarkdownHeader(int level, String text) {

@@ -8,10 +8,10 @@ import java.util.Arrays;
 public enum SegmentStatus {
 
     /** 分片已经保存到 MySQL，尚未生成向量。 */
-    INIT("init"),
+    INIT("INIT"),
 
     /** 分片已经完成向量化并写入向量存储。 */
-    VECTOR_STORED("vector_stored");
+    VECTOR_STORED("VECTOR_STORED");
 
     private final String value;
 

@@ -4,6 +4,7 @@ import com.llmstudy.rag.config.MinioProperties;
 import com.llmstudy.rag.entity.KnowledgeDocument;
 import com.llmstudy.rag.entity.TableMeta;
 import com.llmstudy.rag.enums.DocumentStatus;
+import com.llmstudy.rag.enums.TableMetaStatus;
 import com.llmstudy.rag.mapper.KnowledgeDocumentMapper;
 import com.llmstudy.rag.mapper.TableMetaMapper;
 import com.llmstudy.rag.service.splitter.ExcelSplitter;
@@ -200,7 +201,7 @@ public class ExcelImportService {
             meta.setTableName(importTable.tableName());
             meta.setColumnMapping(columnMappingJson(importTable.sheet()));
             meta.setRowCount(0L);
-            meta.setStatus("creating");
+            meta.setStatus(TableMetaStatus.CREATING.value());
             if (tableMetaMapper.insert(meta) != 1) {
                 throw new IllegalStateException("占用 Excel 目标表名失败: " + importTable.tableName());
             }
@@ -221,7 +222,7 @@ public class ExcelImportService {
 
     private void cleanupStaleAttempt(String docId) {
         List<TableMeta> existing = tableMetaMapper.findByDocId(docId);
-        if (existing.stream().anyMatch(meta -> "imported".equals(meta.getStatus()))) {
+        if (existing.stream().anyMatch(meta -> TableMetaStatus.IMPORTED.matches(meta.getStatus()))) {
             throw new IllegalStateException("Excel 已存在完成的导入表，不允许覆盖: docId=" + docId);
         }
         for (TableMeta meta : existing) {

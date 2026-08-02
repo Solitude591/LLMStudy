@@ -1,6 +1,7 @@
 package com.llmstudy.rag.mapper;
 
 import com.llmstudy.rag.entity.KnowledgeSegment;
+import com.llmstudy.rag.enums.SegmentStatus;
 import org.apache.ibatis.annotations.*;
 
 import java.util.List;
@@ -23,8 +24,13 @@ public interface KnowledgeSegmentMapper {
     @Select("SELECT * FROM knowledge_segment WHERE doc_id = #{docId} AND status = #{status} ORDER BY chunk_order ASC")
     List<KnowledgeSegment> findByDocIdAndStatus(@Param("docId") String docId, @Param("status") String status);
 
-    @Select("SELECT * FROM knowledge_segment WHERE doc_id = #{docId} AND status = 'init' AND skip_embedding = 0")
-    List<KnowledgeSegment> findPendingByDocId(@Param("docId") String docId);
+    @Select("SELECT * FROM knowledge_segment WHERE doc_id = #{docId} AND status = #{status} AND skip_embedding = 0")
+    List<KnowledgeSegment> findPendingByDocIdValue(@Param("docId") String docId,
+                                                   @Param("status") String status);
+
+    default List<KnowledgeSegment> findPendingByDocId(String docId) {
+        return findPendingByDocIdValue(docId, SegmentStatus.INIT.value());
+    }
 
     @Select("SELECT * FROM knowledge_segment WHERE status = #{status} ORDER BY created_at DESC")
     List<KnowledgeSegment> findByStatus(@Param("status") String status);
@@ -78,7 +84,7 @@ public interface KnowledgeSegmentMapper {
      * 使用 foreach 动态 SQL 减少数据库往返次数。
      *
      * @param chunkIds 要更新的 chunk_id 列表
-     * @param status 目标状态，通常是 'vector_stored'
+     * @param status 目标状态，通常是 'VECTOR_STORED'
      * @return 实际更新的行数
      */
     @Update("""

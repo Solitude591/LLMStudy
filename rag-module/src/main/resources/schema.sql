@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_document`
     `uploader`        VARCHAR(64)  NOT NULL COMMENT '上传者',
     `doc_url`         VARCHAR(512) NOT NULL DEFAULT '' COMMENT 'MinIO 存储路径（bucket/key）',
     `raw_object_key`  VARCHAR(512) NOT NULL DEFAULT '' COMMENT '原始文件的 MinIO object key',
-    `doc_status`        VARCHAR(32)  NOT NULL DEFAULT 'init' COMMENT '文档状态：init, uploaded, importing, imported, converting, converted, splitting, chunked, vectoring, vector_stored',
+    `doc_status`        VARCHAR(32)  NOT NULL DEFAULT 'INIT' COMMENT '文档状态：INIT, UPLOADED, IMPORTING, IMPORTED, CONVERTING, CONVERTED, SPLITTING, CHUNKED, VECTORING, VECTOR_STORED',
     `converted_doc_url` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '解析后的 markdown 文件 MinIO 路径',
     `error_message`     TEXT                  DEFAULT NULL COMMENT '处理失败时的错误信息',
     `retry_count`       INT          NOT NULL DEFAULT 0 COMMENT '自动补偿重试次数，达到上限后停止补偿等待人工处理',
@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS `table_meta`
     `table_name`     VARCHAR(64)  NOT NULL COMMENT 'MySQL 物理表名',
     `column_mapping` JSON         NOT NULL COMMENT 'Excel 表头与物理列名的映射',
     `row_count`      BIGINT       NOT NULL DEFAULT 0 COMMENT '已导入数据行数',
-    `status`         VARCHAR(32)  NOT NULL DEFAULT 'creating' COMMENT 'creating, imported',
+    `status`         VARCHAR(32)  NOT NULL DEFAULT 'CREATING' COMMENT 'CREATING, IMPORTED',
     `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_segment`
     `doc_id`         BIGINT       NOT NULL COMMENT '所属文档ID，关联 knowledge_document.doc_id',
     `chunk_order`    INT          NOT NULL DEFAULT 0 COMMENT '文档内分片顺序，从0开始',
     `embedding_id`   VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'ES 中的向量文档 ID',
-    `status`         VARCHAR(32)  NOT NULL DEFAULT 'init' COMMENT '片段状态：init-初始化, vector_stored-已向量化',
+    `status`         VARCHAR(32)  NOT NULL DEFAULT 'INIT' COMMENT '片段状态：INIT-初始化, VECTOR_STORED-已向量化',
     `metadata`       VARCHAR(2048)                 COMMENT '元数据（parent_chunk_id、brother_chunk_id、page_number 等）',
     `skip_embedding` TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否跳过嵌入向量生成：0-不跳过, 1-跳过',
     `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -192,3 +192,69 @@ CREATE TABLE IF NOT EXISTS `knowledge_segment`
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci COMMENT ='知识库文档分片片段表';
+
+
+CREATE TABLE IF NOT EXISTS `chat_conversation`
+(
+    `id`              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+    `conversation_id` VARCHAR(64)   NOT NULL COMMENT '会话唯一标识',
+    `user_id`         VARCHAR(64)   NOT NULL COMMENT '用户唯一标识',
+    `title`           VARCHAR(255)  NOT NULL DEFAULT '' COMMENT '会话标题',
+    `status`          VARCHAR(32)   NOT NULL DEFAULT 'ACTIVE' COMMENT '会话状态：ACTIVE-活跃，ARCHIVED-已归档，DELETED-已删除',
+    `created_at`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_chat_conversation_id` (`conversation_id`),
+    KEY `idx_chat_conversation_user_status_updated` (`user_id`, `status`, `updated_at`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT = '聊天会话表';
+
+
+CREATE TABLE IF NOT EXISTS `chat_message`
+(
+    `id`                  BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+    `message_id`          VARCHAR(64)   NOT NULL COMMENT '消息唯一标识',
+    `conversation_id`     VARCHAR(64)   NOT NULL COMMENT '所属会话 ID，关联 chat_conversation.conversation_id',
+    `type`                VARCHAR(32)   NOT NULL COMMENT '消息类型：SYSTEM，USER，ASSISTANT，TOOL',
+    `content`             LONGTEXT      NOT NULL COMMENT '消息内容',
+    `transform_content`   LONGTEXT               DEFAULT NULL COMMENT '改写后的内容，主要用于保存用户问题改写结果',
+    `token_count`         INT UNSIGNED           DEFAULT NULL COMMENT 'Token 数量，NULL 表示未统计',
+    `model_name`          VARCHAR(128)            DEFAULT NULL COMMENT '生成或处理该消息的模型名称',
+    `rag_references`      JSON                    DEFAULT NULL COMMENT 'RAG 引用内容',
+    `metadata`            JSON                    DEFAULT NULL COMMENT '扩展元数据',
+    `created_at`          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_chat_message_id` (`message_id`),
+    KEY `idx_chat_message_conversation_created` (`conversation_id`, `created_at`, `id`),
+    CONSTRAINT `fk_chat_message_conversation` FOREIGN KEY (`conversation_id`)
+        REFERENCES `chat_conversation` (`conversation_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT = '聊天消息表';
+
+-- 兼容已存在的小写枚举值：数据及字段默认值统一迁移为大写。
+UPDATE `knowledge_document`
+SET `doc_status` = UPPER(`doc_status`)
+WHERE BINARY `doc_status` <> BINARY UPPER(`doc_status`);
+ALTER TABLE `knowledge_document` ALTER COLUMN `doc_status` SET DEFAULT 'INIT';
+
+UPDATE `table_meta`
+SET `status` = UPPER(`status`)
+WHERE BINARY `status` <> BINARY UPPER(`status`);
+ALTER TABLE `table_meta` ALTER COLUMN `status` SET DEFAULT 'CREATING';
+
+UPDATE `knowledge_segment`
+SET `status` = UPPER(`status`)
+WHERE BINARY `status` <> BINARY UPPER(`status`);
+ALTER TABLE `knowledge_segment` ALTER COLUMN `status` SET DEFAULT 'INIT';
+
+UPDATE `chat_conversation`
+SET `status` = UPPER(`status`)
+WHERE BINARY `status` <> BINARY UPPER(`status`);
+ALTER TABLE `chat_conversation` ALTER COLUMN `status` SET DEFAULT 'ACTIVE';
+
+UPDATE `chat_message`
+SET `type` = UPPER(`type`)
+WHERE BINARY `type` <> BINARY UPPER(`type`);

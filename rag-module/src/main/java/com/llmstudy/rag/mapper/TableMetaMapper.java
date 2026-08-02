@@ -1,6 +1,7 @@
 package com.llmstudy.rag.mapper;
 
 import com.llmstudy.rag.entity.TableMeta;
+import com.llmstudy.rag.enums.TableMetaStatus;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -29,12 +30,18 @@ public interface TableMetaMapper {
 
     @Update("""
             UPDATE table_meta
-            SET row_count = #{rowCount}, status = 'imported'
+            SET row_count = #{rowCount}, status = #{status}
             WHERE doc_id = #{docId} AND sheet_index = #{sheetIndex}
             """)
-    int markImported(@Param("docId") String docId,
-                     @Param("sheetIndex") int sheetIndex,
-                     @Param("rowCount") long rowCount);
+    int markImportedValue(@Param("docId") String docId,
+                          @Param("sheetIndex") int sheetIndex,
+                          @Param("rowCount") long rowCount,
+                          @Param("status") String status);
+
+    default int markImported(String docId, int sheetIndex, long rowCount) {
+        return markImportedValue(
+                docId, sheetIndex, rowCount, TableMetaStatus.IMPORTED.value());
+    }
 
     @Delete("DELETE FROM table_meta WHERE doc_id = #{docId}")
     int deleteByDocId(@Param("docId") String docId);

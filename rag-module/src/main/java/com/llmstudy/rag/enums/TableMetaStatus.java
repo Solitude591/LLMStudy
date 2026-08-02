@@ -3,26 +3,21 @@ package com.llmstudy.rag.enums;
 import java.util.Arrays;
 
 /**
- * knowledge_document.doc_status 对应的文档生命周期状态。
+ * table_meta.status 对应的 Excel 表元数据状态。
  *
  * <p>枚举 value 与数据库统一使用大写字符串。</p>
  */
-public enum DocumentStatus {
+public enum TableMetaStatus {
 
-    INIT("INIT"),
-    UPLOADED("UPLOADED"),
-    IMPORTING("IMPORTING"),
-    IMPORTED("IMPORTED"),
-    CONVERTING("CONVERTING"),
-    CONVERTED("CONVERTED"),
-    SPLITTING("SPLITTING"),
-    CHUNKED("CHUNKED"),
-    VECTORING("VECTORING"),
-    VECTOR_STORED("VECTOR_STORED");
+    /** 表名已预留，物理表创建或数据导入尚未完成。 */
+    CREATING("CREATING"),
+
+    /** Sheet 数据已全部导入物理表，元数据状态落定。 */
+    IMPORTED("IMPORTED");
 
     private final String value;
 
-    DocumentStatus(String value) {
+    TableMetaStatus(String value) {
         this.value = value;
     }
 
@@ -40,10 +35,10 @@ public enum DocumentStatus {
         return statusValue != null && value.equalsIgnoreCase(statusValue);
     }
 
-    public static DocumentStatus fromValue(String value) {
+    public static TableMetaStatus fromValue(String value) {
         return Arrays.stream(values())
                 .filter(status -> status.value.equalsIgnoreCase(value))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("未知文档状态: " + value));
+                .orElseThrow(() -> new IllegalArgumentException("未知表元数据状态: " + value));
     }
 }

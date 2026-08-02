@@ -167,7 +167,7 @@ public class KnowledgeDocument {
     }
 
     /**
-     * 业务层使用枚举设置状态，落库前仍转换为兼容现有表结构的小写字符串。
+     * 业务层使用枚举设置状态，落库前转换为统一的大写字符串。
      */
     public void setDocumentStatus(DocumentStatus documentStatus) {
         if (documentStatus == null) {

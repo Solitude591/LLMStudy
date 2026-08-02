@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="用于测试 RAG Module 同步与流式聊天接口的本地聊天页面">
+    <title>RAG Chat · 接口测试</title>
+    <link rel="stylesheet" href="css/chat.css">
+</head>
+<body>
+<!-- 整个页面采用“会话侧栏 + 对话主区域”的双栏结构。 -->
+<div class="chat-app">
+    <aside id="sidebar" class="sidebar" aria-label="会话列表">
+        <div class="brand-row">
+            <div class="brand-mark" aria-hidden="true">R</div>
+            <div>
+                <strong>RAG Chat</strong>
+                <span>接口测试工作台</span>
+            </div>
+            <button id="closeSidebarButton" class="icon-button mobile-only" type="button"
+                    aria-label="关闭会话栏">×</button>
+        </div>
+
+        <button id="newChatButton" class="new-chat-button" type="button">
+            <span aria-hidden="true">＋</span>
+            新建对话
+        </button>
+
+        <label class="session-search">
+            <span class="visually-hidden">搜索会话</span>
+            <span aria-hidden="true">⌕</span>
+            <input id="sessionSearchInput" type="search" placeholder="搜索本地会话" autocomplete="off">
+        </label>
+
+        <div class="session-heading">
+            <span>最近会话</span>
+            <span id="sessionCount">0</span>
+        </div>
+
+        <!-- 当前 Controller 没有会话列表接口，因此这里展示浏览器本地保存的测试会话。 -->
+        <nav id="sessionList" class="session-list" aria-label="最近会话"></nav>
+
+        <div class="sidebar-settings">
+            <div class="settings-title">
+                <span>测试设置</span>
+                <span id="connectionDot" class="connection-dot" aria-hidden="true"></span>
+            </div>
+
+            <label class="setting-field">
+                <span>用户 ID</span>
+                <input id="userIdInput" type="text" value="default" maxlength="64"
+                       placeholder="default" autocomplete="off">
+            </label>
+
+            <fieldset class="mode-field">
+                <legend>响应模式</legend>
+                <div class="mode-switch">
+                    <button class="mode-button is-active" type="button" data-mode="stream">流式</button>
+                    <button class="mode-button" type="button" data-mode="sync">完整</button>
+                </div>
+            </fieldset>
+
+            <p id="endpointLabel" class="endpoint-label">POST /chat/client/stream</p>
+        </div>
+    </aside>
+
+    <div id="sidebarBackdrop" class="sidebar-backdrop" hidden></div>
+
+    <main class="conversation-panel">
+        <header class="conversation-header">
+            <button id="openSidebarButton" class="icon-button mobile-only" type="button"
+                    aria-label="打开会话栏">☰</button>
+
+            <div class="conversation-identity">
+                <h1 id="conversationTitle">新对话</h1>
+                <button id="conversationIdButton" class="conversation-id" type="button"
+                        title="点击复制会话 ID" disabled>
+                    尚未创建会话
+                </button>
+            </div>
+
+            <div class="header-status">
+                <span id="requestStatus" class="status-label">准备就绪</span>
+                <span class="status-orb" aria-hidden="true"></span>
+            </div>
+        </header>
+
+        <!-- 消息区域使用 aria-live，让辅助技术可以感知新回复。 -->
+        <section id="messageViewport" class="message-viewport" aria-live="polite">
+            <div id="messageList" class="message-list"></div>
+        </section>
+
+        <section class="composer-section" aria-label="发送消息">
+            <div id="errorBanner" class="error-banner" role="alert" hidden></div>
+
+            <form id="composerForm" class="composer-form">
+                <textarea id="messageInput" rows="1" maxlength="12000"
+                          placeholder="输入问题，Enter 发送，Shift + Enter 换行"
+                          aria-label="聊天消息"></textarea>
+
+                <div class="composer-actions">
+                    <span id="characterCount" class="character-count">0 / 12000</span>
+                    <button id="stopButton" class="stop-button" type="button" hidden>停止</button>
+                    <button id="sendButton" class="send-button" type="submit" aria-label="发送消息">
+                        <span>发送</span>
+                        <span aria-hidden="true">↗</span>
+                    </button>
+                </div>
+            </form>
+
+            <p class="composer-hint">会话记录保存在 MySQL；侧栏展示数据仅保存在当前浏览器。</p>
+        </section>
+    </main>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="js/chat.js" defer></script>
+</body>
+</html>

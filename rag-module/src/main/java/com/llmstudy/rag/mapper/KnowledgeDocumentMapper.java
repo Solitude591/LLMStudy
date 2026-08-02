@@ -52,18 +52,33 @@ public interface KnowledgeDocumentMapper {
      * 按更新时间升序（先失败的先补偿），单轮数量由 batchSize 限制。</p>
      */
     @Select("""
+            <script>
             SELECT * FROM knowledge_document
-            WHERE doc_status IN ('uploaded', 'converted', 'chunked')
+            WHERE doc_status IN
+            <foreach collection='statuses' item='s' open='(' separator=',' close=')'>
+                #{s}
+            </foreach>
               AND error_message IS NOT NULL
-              AND retry_count < #{maxRetryCount}
-              AND updated_at < #{before}
+              AND retry_count &lt; #{maxRetryCount}
+              AND updated_at &lt; #{before}
             ORDER BY updated_at ASC
             LIMIT #{batchSize}
+            </script>
             """)
-    List<KnowledgeDocument> findFailedForCompensation(
+    List<KnowledgeDocument> findFailedForCompensationValue(
+            @Param("statuses") List<String> statuses,
             @Param("maxRetryCount") int maxRetryCount,
             @Param("before") LocalDateTime before,
             @Param("batchSize") int batchSize);
+
+    default List<KnowledgeDocument> findFailedForCompensation(
+            int maxRetryCount, LocalDateTime before, int batchSize) {
+        return findFailedForCompensationValue(
+                List.of(DocumentStatus.UPLOADED.value(),
+                        DocumentStatus.CONVERTED.value(),
+                        DocumentStatus.CHUNKED.value()),
+                maxRetryCount, before, batchSize);
+    }
 
     /**
      * 查找卡死在中间态的文档。
@@ -72,15 +87,30 @@ public interface KnowledgeDocumentMapper {
      * converting/splitting/vectoring 等执行态，需要回退到上一稳定状态重新触发。</p>
      */
     @Select("""
+            <script>
             SELECT * FROM knowledge_document
-            WHERE doc_status IN ('converting', 'splitting', 'vectoring')
-              AND updated_at < #{deadline}
+            WHERE doc_status IN
+            <foreach collection='statuses' item='s' open='(' separator=',' close=')'>
+                #{s}
+            </foreach>
+              AND updated_at &lt; #{deadline}
             ORDER BY updated_at ASC
             LIMIT #{batchSize}
+            </script>
             """)
-    List<KnowledgeDocument> findStaleIntermediate(
+    List<KnowledgeDocument> findStaleIntermediateValue(
+            @Param("statuses") List<String> statuses,
             @Param("deadline") LocalDateTime deadline,
             @Param("batchSize") int batchSize);
+
+    default List<KnowledgeDocument> findStaleIntermediate(
+            LocalDateTime deadline, int batchSize) {
+        return findStaleIntermediateValue(
+                List.of(DocumentStatus.CONVERTING.value(),
+                        DocumentStatus.SPLITTING.value(),
+                        DocumentStatus.VECTORING.value()),
+                deadline, batchSize);
+    }
 
     /**
      * 抢占一次自动重试名额：CAS 校验状态未变化且重试未达上限，随后递增 retry_count。

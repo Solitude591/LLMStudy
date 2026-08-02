@@ -207,7 +207,7 @@ public class DocumentServiceImpl implements DocumentService {
         doc.setUploader(uploader);
         doc.setDocUrl(docUrl);
         doc.setRawObjectKey(objectKey);
-        // 文档状态统一通过枚举设置，数据库仍保存兼容现有数据的小写值。
+        // 文档状态统一通过枚举设置，数据库保存大写值。
         doc.setDocumentStatus(DocumentStatus.UPLOADED);
         doc.setVisibility(visibility);
         try {

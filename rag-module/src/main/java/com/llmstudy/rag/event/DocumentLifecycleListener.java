@@ -136,7 +136,7 @@ public class DocumentLifecycleListener {
                 docId, event.getSegmentCount());
 
         try {
-            // embedSegments 只处理 status='init' 且 skip_embedding=0 的 segment：
+            // embedSegments 只处理 status='INIT' 且 skip_embedding=0 的 segment：
             // standalone 和 child 参与向量化，parent（完整章节）被跳过。
             // 内部按 embeddingBatchSize 分批调用 embedding API，每批独立写入 ES。
             int embedded = segmentService.embedSegments(docId);

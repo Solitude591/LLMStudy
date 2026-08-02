@@ -106,7 +106,7 @@ public class KnowledgeSegment {
     }
 
     /**
-     * 使用枚举设置分片状态，数据库仍保存原有的小写状态值。
+     * 使用枚举设置分片状态，数据库保存统一的大写状态值。
      */
     public void setSegmentStatus(SegmentStatus segmentStatus) {
         if (segmentStatus == null) {

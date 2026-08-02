@@ -98,7 +98,7 @@ public class DocumentController {
      * POST /document/{docId}/embed
      *
      * 将已分片的 segment 批量向量化并写入 Elasticsearch。
-     * 只处理 status='init' 且 skip_embedding=0 的 segment。
+     * 只处理 status='INIT' 且 skip_embedding=0 的 segment。
      * 文档状态会流转为 vectoring → vector_stored。
      */
     @PostMapping("/{docId}/embed")

@@ -1,5 +1,7 @@
 package com.llmstudy.rag.controller;
 
+import com.llmstudy.rag.config.ChatProperties;
+import com.llmstudy.rag.dto.ChatConversationResponse;
 import com.llmstudy.rag.dto.ChatRequest;
 import com.llmstudy.rag.dto.ChatResponse;
 import com.llmstudy.rag.dto.ChatStreamResponse;
@@ -7,6 +9,7 @@ import com.llmstudy.rag.entity.ChatConversation;
 import com.llmstudy.rag.entity.ChatMessage;
 import com.llmstudy.rag.enums.MessageType;
 import com.llmstudy.rag.service.ChatService;
+import com.llmstudy.rag.service.TitleSummaryService;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -14,6 +17,8 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -29,24 +34,26 @@ import java.util.concurrent.atomic.AtomicReference;
 @RequestMapping("/chat/client")
 public class ChatClientController {
 
-    /** 每次调用模型时最多加载的历史消息数，避免上下文无限增长。 */
-    private static final int HISTORY_LIMIT = 20;
-
-    /** 使用首次问题生成会话标题时保留的最大字符数。 */
-    private static final int TITLE_MAX_LENGTH = 30;
-
-    /** 登录功能接入前的临时用户标识。 */
-    private static final String DEFAULT_USER_ID = "default";
-
     /** 负责组装 Prompt 并调用底层聊天模型。 */
     private final ChatClient chatClient;
 
     /** 负责会话、消息查询与 MySQL 持久化。 */
     private final ChatService chatService;
 
-    public ChatClientController(ChatClient chatClient, ChatService chatService) {
+    /** 负责在虚拟线程中生成并回写会话标题。 */
+    private final TitleSummaryService titleSummaryService;
+
+    /** 统一提供历史窗口、临时标题长度和默认用户等聊天业务参数。 */
+    private final ChatProperties chatProperties;
+
+    public ChatClientController(ChatClient chatClient,
+                                ChatService chatService,
+                                TitleSummaryService titleSummaryService,
+                                ChatProperties chatProperties) {
         this.chatClient = chatClient;
         this.chatService = chatService;
+        this.titleSummaryService = titleSummaryService;
+        this.chatProperties = chatProperties;
     }
 
     /**
@@ -76,6 +83,10 @@ public class ChatClientController {
                 validated.query(),
                 null);
 
+        // 首次提问时异步生成精准标题；生成失败会保留临时标题。
+        triggerTitleGenerationIfFirstMessage(
+                history.isEmpty(), validated.query(), conversation);
+
         // 使用 chatResponse() 而不是 content()，以便同时获得正文、Token 和模型名称。
         org.springframework.ai.chat.model.ChatResponse aiResponse =
                 chatClient.prompt()
@@ -99,6 +110,7 @@ public class ChatClientController {
         // 返回会话 ID 和两条消息 ID，前端可用它们继续会话或定位消息。
         return new ChatResponse(
                 conversation.getConversationId(),
+                conversation.getTitle(),
                 userMessage.getMessageId(),
                 assistantMessage.getMessageId(),
                 answer,
@@ -129,6 +141,10 @@ public class ChatClientController {
         // 提前保存不变的业务 ID，便于在后续的 Reactor 回调中安全引用。
         String conversationId = conversation.getConversationId();
         String userMessageId = userMessage.getMessageId();
+
+        // 首次提问时异步生成精准标题；生成失败会保留临时标题。
+        triggerTitleGenerationIfFirstMessage(
+                history.isEmpty(), validated.query(), conversation);
 
         // 每个 DELTA 只包含增量文本，这里同时聚合完整回答，供流结束后一次性落库。
         StringBuilder answer = new StringBuilder();
@@ -178,9 +194,42 @@ public class ChatClientController {
         });
 
         // START 先返回 ID，中间连续返回文本，落库成功后最后返回 DONE。
-        return Flux.just(ChatStreamResponse.start(conversationId, userMessageId))
+        return Flux.just(ChatStreamResponse.start(
+                        conversationId, conversation.getTitle(), userMessageId))
                 .concatWith(deltas)
                 .concatWith(done);
+    }
+
+    /**
+     * 查询单个会话的当前摘要，供前端获取异步生成后写入数据库的新标题。
+     *
+     * @param conversationId 会话业务 ID
+     * @return 当前会话标题、状态和更新时间
+     */
+    @GetMapping("/conversations/{conversationId}")
+    public ChatConversationResponse getConversation(
+            @PathVariable String conversationId) {
+        // Service 已负责参数校验；这里额外处理不存在记录，避免转换 null 实体。
+        ChatConversation conversation = chatService.getConversation(conversationId);
+        if (conversation == null) {
+            throw new IllegalArgumentException("会话不存在: " + conversationId);
+        }
+        return ChatConversationResponse.from(conversation);
+    }
+
+    /**
+     * 当前会话没有历史消息时触发异步标题生成。
+     *
+     * <p>不能只根据请求中是否传入 conversationId 判断，因为兼容接口允许前端
+     * 预先生成会话 ID；以持久化历史是否为空判断，才能覆盖两种创建方式。</p>
+     */
+    private void triggerTitleGenerationIfFirstMessage(boolean firstMessage,
+                                                      String firstQuery,
+                                                      ChatConversation conversation) {
+        if (firstMessage) {
+            titleSummaryService.generateTitleAsync(
+                    conversation.getConversationId(), firstQuery);
+        }
     }
 
     /**
@@ -201,7 +250,8 @@ public class ChatClientController {
      * 从 MySQL 加载最近的业务消息，并转换为 Spring AI 可接受的历史消息。
      */
     private List<Message> loadHistory(String conversationId) {
-        return chatService.listRecentMessages(conversationId, HISTORY_LIMIT).stream()
+        return chatService.listRecentMessages(
+                        conversationId, chatProperties.getHistoryLimit()).stream()
                 .map(ChatClientController::toAiMessage)
                 .filter(Objects::nonNull)
                 .toList();
@@ -279,7 +329,7 @@ public class ChatClientController {
         String userId = normalizeNullable(request.userId());
         return new ValidatedChatRequest(
                 conversationId,
-                userId == null ? DEFAULT_USER_ID : userId,
+                userId == null ? chatProperties.getDefaultUserId() : userId,
                 request.query().trim());
     }
 
@@ -298,8 +348,9 @@ public class ChatClientController {
      */
     private String buildTitle(String query) {
         String title = query.replaceAll("\\s+", " ").trim();
-        return title.length() <= TITLE_MAX_LENGTH
-                ? title : title.substring(0, TITLE_MAX_LENGTH);
+        int maxLength = chatProperties.getInitialTitleMaxLength();
+        return title.length() <= maxLength
+                ? title : title.substring(0, maxLength);
     }
 
     /** Controller 内部使用的已校验请求，不作为 HTTP DTO 暴露。 */

@@ -22,10 +22,10 @@ import java.util.UUID;
 public class ChatServiceImpl implements ChatService {
 
     /** 与 chat_conversation.title 的 VARCHAR(255) 长度保持一致。 */
-    private static final int MAX_TITLE_LENGTH = 255;
+    private static final int DATABASE_TITLE_MAX_LENGTH = 255;
 
     /** 与 chat_message.model_name 的 VARCHAR(128) 长度保持一致。 */
-    private static final int MAX_MODEL_NAME_LENGTH = 128;
+    private static final int DATABASE_MODEL_NAME_MAX_LENGTH = 128;
 
     /** 会话表数据访问对象。 */
     private final ChatConversationMapper chatConversationMapper;
@@ -262,9 +262,10 @@ public class ChatServiceImpl implements ChatService {
             return "";
         }
         String normalized = title.trim();
-        if (normalized.length() > MAX_TITLE_LENGTH) {
+        if (normalized.length() > DATABASE_TITLE_MAX_LENGTH) {
             throw new IllegalArgumentException(
-                    "会话标题不能超过 " + MAX_TITLE_LENGTH + " 个字符");
+                    "会话标题不能超过 "
+                            + DATABASE_TITLE_MAX_LENGTH + " 个字符");
         }
         return normalized;
     }
@@ -277,10 +278,10 @@ public class ChatServiceImpl implements ChatService {
             return null;
         }
         String normalized = modelName.trim();
-        if (normalized.length() > MAX_MODEL_NAME_LENGTH) {
+        if (normalized.length() > DATABASE_MODEL_NAME_MAX_LENGTH) {
             throw new IllegalArgumentException(
                     "模型名称不能超过 "
-                            + MAX_MODEL_NAME_LENGTH + " 个字符");
+                            + DATABASE_MODEL_NAME_MAX_LENGTH + " 个字符");
         }
         return normalized;
     }

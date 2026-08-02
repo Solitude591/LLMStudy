@@ -5,6 +5,7 @@ package com.llmstudy.rag.dto;
  *
  * @param event              事件类型：START、DELTA 或 DONE
  * @param conversationId     会话 ID，每个事件都会携带
+ * @param conversationTitle  会话临时标题，仅 START 事件有值
  * @param userMessageId      本次用户消息 ID
  * @param assistantMessageId 助手消息 ID，仅 DONE 事件有值
  * @param content            本次增量文本，仅 DELTA 事件有值
@@ -14,6 +15,7 @@ package com.llmstudy.rag.dto;
 public record ChatStreamResponse(
         String event,
         String conversationId,
+        String conversationTitle,
         String userMessageId,
         String assistantMessageId,
         String content,
@@ -24,9 +26,11 @@ public record ChatStreamResponse(
      * 构造流开始事件，让前端在收到模型文本之前拿到会话和消息 ID。
      */
     public static ChatStreamResponse start(
-            String conversationId, String userMessageId) {
+            String conversationId,
+            String conversationTitle,
+            String userMessageId) {
         return new ChatStreamResponse(
-                "START", conversationId, userMessageId,
+                "START", conversationId, conversationTitle, userMessageId,
                 null, null, null, null);
     }
 
@@ -36,7 +40,7 @@ public record ChatStreamResponse(
     public static ChatStreamResponse delta(
             String conversationId, String userMessageId, String content) {
         return new ChatStreamResponse(
-                "DELTA", conversationId, userMessageId,
+                "DELTA", conversationId, null, userMessageId,
                 null, content, null, null);
     }
 
@@ -50,7 +54,7 @@ public record ChatStreamResponse(
             Integer tokenCount,
             String modelName) {
         return new ChatStreamResponse(
-                "DONE", conversationId, userMessageId,
+                "DONE", conversationId, null, userMessageId,
                 assistantMessageId, null, tokenCount, modelName);
     }
 }

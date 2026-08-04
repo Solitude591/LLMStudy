@@ -15,6 +15,15 @@ spring:
       mode: always
       schema-locations: classpath:schema.sql
 
+  data:
+    redis:
+      # KNN 父分片二级缓存；Redis 只用于加速，不可用时检索自动回退 MySQL
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      # 连接与读写超时
+      timeout: ${REDIS_TIMEOUT:2s}
+
   ai:
     openai:
       api-key: ${DEEPSEEK_API_KEY}
@@ -58,6 +67,19 @@ mineru:
   token: ${MINERU_TOKEN}
 
 rag:
+  chat:
+    # 每次请求最多加载的历史消息数
+    history-limit: ${RAG_CHAT_HISTORY_LIMIT:20}
+    # AI 标题生成完成前，临时标题保留的最大字符数
+    initial-title-max-length: ${RAG_CHAT_INITIAL_TITLE_MAX_LENGTH:10}
+    # 登录功能接入前使用的默认用户标识
+    default-user-id: ${RAG_CHAT_DEFAULT_USER_ID:default}
+    title-summary:
+      # 标题生成使用的轻量模型；留空则沿用主对话模型
+      model: ${TITLE_SUMMARY_MODEL:deepseek-v4-flash}
+      # 生成标题的最大字符数，超过则截断
+      max-title-length: ${TITLE_SUMMARY_MAX_LENGTH:20}
+
   compensation:
     # 补偿任务 cron 表达式，每 5 分钟扫描一次失败/卡死文档
     cron: "0 */5 * * * ?"
@@ -76,6 +98,23 @@ rag:
       chunk-size: ${RAG_MARKDOWN_CHUNK_SIZE:1000}
       # 相邻子分片重叠字符数，必须大于等于 0 且小于 chunk-size
       chunk-overlap: ${RAG_MARKDOWN_CHUNK_OVERLAP:100}
+
+  snowflake:
+    # 雪花算法 workerId，多实例部署时需保证各实例唯一（0~1023）
+    worker-id: ${RAG_SNOWFLAKE_WORKER_ID:1}
+
+  reranker:
+    # 本地 BGE ReRanker；把 ONNX 模型与 tokenizer 放到 model-path 指定目录后，
+    # 设置 BGE_RERANKER_ENABLED=true 即可启用，无需重新打包。
+    enabled: ${BGE_RERANKER_ENABLED:false}
+    model-path: ${BGE_RERANKER_MODEL_PATH:./models/bge-reranker-v2-m3/model_int8.onnx}
+    tokenizer-path: ${BGE_RERANKER_TOKENIZER_PATH:./models/bge-reranker-v2-m3}
+    # pair 分词最大长度与推理批次大小
+    max-length: ${BGE_RERANKER_MAX_LENGTH:512}
+    batch-size: ${BGE_RERANKER_BATCH_SIZE:4}
+    # RRF 后进入 ReRanker 的候选数与 ReRanker 后返回的条数
+    candidate-count: ${BGE_RERANKER_CANDIDATE_COUNT:10}
+    top-n: ${BGE_RERANKER_TOP_N:8}
 
 logging:
   level:

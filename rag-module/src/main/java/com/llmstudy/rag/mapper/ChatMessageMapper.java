@@ -111,6 +111,21 @@ public interface ChatMessageMapper {
             """)
     int update(ChatMessage message);
 
+    /**
+     * 只更新问题改写结果，避免异步回写覆盖消息的其他字段。
+     *
+     * @param messageId        需要更新的消息业务 ID
+     * @param transformContent 改写后的问题内容
+     * @return 受影响的数据行数
+     */
+    @Update("""
+            UPDATE chat_message
+            SET transform_content = #{transformContent}
+            WHERE message_id = #{messageId}
+            """)
+    int updateTransformContent(@Param("messageId") String messageId,
+                               @Param("transformContent") String transformContent);
+
     @Delete("DELETE FROM chat_message WHERE message_id = #{messageId}")
     int deleteByMessageId(@Param("messageId") String messageId);
 

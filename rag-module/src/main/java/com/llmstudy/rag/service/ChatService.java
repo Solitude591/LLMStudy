@@ -97,6 +97,14 @@ public interface ChatService {
     ChatMessage getMessage(String messageId);
 
     /**
+     * 回写用户问题的改写结果。
+     *
+     * @param messageId        消息唯一标识
+     * @param transformContent 改写后的内容
+     */
+    void updateMessageTransformContent(String messageId, String transformContent);
+
+    /**
      * 查询某会话下的全部消息（按创建时间升序）。
      *
      * @param conversationId 会话唯一标识

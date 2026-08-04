@@ -10,23 +10,28 @@ import com.llmstudy.rag.entity.ChatMessage;
 import com.llmstudy.rag.enums.MessageType;
 import com.llmstudy.rag.service.ChatService;
 import com.llmstudy.rag.service.TitleSummaryService;
+import com.llmstudy.rag.module.KnowEngineQueryTransformer;
+import dev.langchain4j.rag.query.Query;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -37,6 +42,9 @@ public class ChatClientController {
     /** 负责组装 Prompt 并调用底层聊天模型。 */
     private final ChatClient chatClient;
 
+    /** 提供给 QueryTransformer 直接调用的 Spring AI 底层模型。 */
+    private final ChatModel chatModel;
+
     /** 负责会话、消息查询与 MySQL 持久化。 */
     private final ChatService chatService;
 
@@ -46,11 +54,22 @@ public class ChatClientController {
     /** 统一提供历史窗口、临时标题长度和默认用户等聊天业务参数。 */
     private final ChatProperties chatProperties;
 
+    /**
+     * 创建聊天接口控制器，统一注入模型调用、消息持久化和会话配置依赖。
+     *
+     * @param chatClient          负责常规聊天的 Spring AI ChatClient
+     * @param chatModel           负责问题改写的 Spring AI 底层模型
+     * @param chatService         会话和消息持久化服务
+     * @param titleSummaryService 会话标题生成服务
+     * @param chatProperties      聊天业务配置
+     */
     public ChatClientController(ChatClient chatClient,
+                                ChatModel chatModel,
                                 ChatService chatService,
                                 TitleSummaryService titleSummaryService,
                                 ChatProperties chatProperties) {
         this.chatClient = chatClient;
+        this.chatModel = chatModel;
         this.chatService = chatService;
         this.titleSummaryService = titleSummaryService;
         this.chatProperties = chatProperties;
@@ -215,6 +234,37 @@ public class ChatClientController {
             throw new IllegalArgumentException("会话不存在: " + conversationId);
         }
         return ChatConversationResponse.from(conversation);
+    }
+
+    /**
+     * 调用论文知识库 QueryTransformer 测试问题改写效果。
+     *
+     * <p>该接口只用于观察模板的改写结果，不创建会话、不保存消息，
+     * 也不执行后续的向量检索。</p>
+     *
+     * @param query 需要测试改写的原始问题
+     * @return 改写后问题和原始问题
+     */
+    @GetMapping("/test-transfomrer")
+    public Map<String, String> testTransformer(@RequestParam String query) {
+        // 测试接口不复用聊天请求 DTO，因此在这里直接校验查询参数。
+        if (query == null || query.isBlank()) {
+            throw new IllegalArgumentException("原始问题不能为空");
+        }
+        String originalQuery = query.trim();
+
+        // chatService 和 sourceMessageId 都传 null，确保本次测试不会将改写结果回写数据库。
+        Query transformedQuery = new KnowEngineQueryTransformer(
+                chatModel, null, null)
+                .transform(Query.from(originalQuery))
+                .stream()
+                .toList()
+                .getFirst();
+
+        // 改写后 Query 只返回一条；原问题保留在返回 Query 的 metadata 中，这里直接用请求参数。
+        return Map.of(
+                "transformedQuery", transformedQuery.text(),
+                "originalQuery", originalQuery);
     }
 
     /**

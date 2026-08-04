@@ -79,6 +79,26 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Spring Data Redis：KNN 父分片二级缓存，加速子分片到父分片的回查 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- ONNX Runtime CPU：本地 BGE ReRanker 模型推理 -->
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>1.26.0</version>
+        </dependency>
+
+        <!-- DJL Hugging Face Tokenizer：读取本地 tokenizer，为 ReRanker 做 pair 分词 -->
+        <dependency>
+            <groupId>ai.djl.huggingface</groupId>
+            <artifactId>tokenizers</artifactId>
+            <version>0.36.0</version>
+        </dependency>
+
         <dependency>
             <groupId>org.commonmark</groupId>
             <artifactId>commonmark</artifactId>
@@ -137,6 +157,18 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!--
+                        JDK 21+ 不再保证 Mockito 可以在测试进程启动后动态附加 Agent。
+                        测试 JVM 启动时预加载 Mockito Agent，确保 final 类/方法的 mock
+                        可以稳定运行，并避免未来 JDK 完全禁止自附加后测试失败。
+                    -->
+                    <argLine>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</argLine>
+                </configuration>
             </plugin>
         </plugins>
     </build>

@@ -190,6 +190,28 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /**
+     * 仅回写消息的问题改写内容，不变更原始问题及其他元数据。
+     *
+     * @param messageId        需要回写的原始用户消息 ID
+     * @param transformContent 模型生成的问题改写结果
+     */
+    @Override
+    @Transactional
+    public void updateMessageTransformContent(String messageId,
+                                              String transformContent) {
+        // 消息 ID 和改写内容都是必填值，在进入 Mapper 前返回更明确的业务错误。
+        requireText(messageId, "messageId 不能为空");
+        requireText(transformContent, "改写后的消息内容不能为空");
+
+        // 只更新 transform_content，避免异步任务覆盖同一消息后续写入的其他字段。
+        int updated = chatMessageMapper.updateTransformContent(
+                messageId.trim(), transformContent.trim());
+
+        // 改写结果应当精确更新一条消息，更新数量异常时直接报错。
+        requireSingleRow(updated, "回写问题改写结果失败");
+    }
+
+    /**
      * 按创建时间正序返回会话的完整消息历史。
      */
     @Override

@@ -51,6 +51,20 @@ public class ElasticsearchConfig {
                 .build();
     }
 
+    /**
+     * 暴露基于现有 RestClient 的 Elasticsearch Java 客户端。
+     *
+     * <p>LangChain4j 向量存储内部自建客户端，不对外暴露；混合检索的 BM25
+     * 通道需要直接发起 match 查询，因此这里复用同一个 RestClient 构造客户端，
+     * 与向量存储共用底层连接。销毁交由 RestClient 的 close 方法负责。</p>
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public ElasticsearchClient elasticsearchClient(RestClient restClient) {
+        return new ElasticsearchClient(
+                new RestClientTransport(restClient, new JacksonJsonpMapper()));
+    }
+
 
     @Bean
     @ConditionalOnMissingBean

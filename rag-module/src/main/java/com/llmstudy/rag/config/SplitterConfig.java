@@ -1,6 +1,6 @@
 package com.llmstudy.rag.config;
 
-import com.llmstudy.rag.service.splitter.MarkdownHeaderParentTextSplitter;
+import com.llmstudy.rag.module.knowledge.ingestion.chunk.MarkdownHeaderChunker;
 import com.llmstudy.rag.util.SnowflakeIdGenerator;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -17,10 +17,10 @@ public class SplitterConfig {
      * 使用外部配置创建 Markdown 分片器，业务 Service 不再决定分片大小。
      */
     @Bean
-    public MarkdownHeaderParentTextSplitter markdownHeaderParentTextSplitter(
+    public MarkdownHeaderChunker markdownHeaderChunker(
             MarkdownSplitterProperties properties,
             SnowflakeIdGenerator idGenerator) {
-        return new MarkdownHeaderParentTextSplitter(
+        return new MarkdownHeaderChunker(
                 idGenerator,
                 properties.getChunkSize(),
                 properties.getChunkOverlap());

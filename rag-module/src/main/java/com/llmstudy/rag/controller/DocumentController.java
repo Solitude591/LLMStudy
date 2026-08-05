@@ -4,8 +4,9 @@ import com.llmstudy.rag.dto.ApiResult;
 import com.llmstudy.rag.dto.DocumentSplitResult;
 import com.llmstudy.rag.dto.DocumentVO;
 import com.llmstudy.rag.enums.DocumentStatus;
-import com.llmstudy.rag.service.DocumentSegmentService;
-import com.llmstudy.rag.service.DocumentService;
+import com.llmstudy.rag.module.knowledge.document.KnowledgeDocumentService;
+import com.llmstudy.rag.module.knowledge.ingestion.chunk.DocumentChunkingService;
+import com.llmstudy.rag.module.knowledge.ingestion.embedding.SegmentEmbeddingService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -17,13 +18,16 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/document")
 public class DocumentController {
 
-    private final DocumentService documentService;
-    private final DocumentSegmentService documentSegmentService;
+    private final KnowledgeDocumentService documentService;
+    private final DocumentChunkingService chunkingService;
+    private final SegmentEmbeddingService embeddingService;
 
-    public DocumentController(DocumentService documentService,
-                              DocumentSegmentService documentSegmentService) {
+    public DocumentController(KnowledgeDocumentService documentService,
+                              DocumentChunkingService chunkingService,
+                              SegmentEmbeddingService embeddingService) {
         this.documentService = documentService;
-        this.documentSegmentService = documentSegmentService;
+        this.chunkingService = chunkingService;
+        this.embeddingService = embeddingService;
     }
 
     /**
@@ -87,7 +91,7 @@ public class DocumentController {
             @PathVariable String docId) {
         // Service 内部会校验文档状态、读取 converted_doc_url，并保证重复请求不会重复入库。
         DocumentSplitResult result =
-                documentSegmentService.splitDocument(docId);
+                chunkingService.splitDocument(docId);
         String message = result.isAlreadySplit()
                 ? "文档已经完成分片"
                 : "文档分片完成";
@@ -103,7 +107,7 @@ public class DocumentController {
      */
     @PostMapping("/{docId}/embed")
     public ApiResult<Integer> embedSegments(@PathVariable String docId) {
-        int count = documentSegmentService.embedSegments(docId);
+        int count = embeddingService.embedSegments(docId);
         return ApiResult.ok("向量化完成", count);
     }
 

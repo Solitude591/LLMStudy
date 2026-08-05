@@ -13,7 +13,11 @@ import java.util.concurrent.Executors;
  * <p>统一注册聊天与标题生成参数，并提供由 Spring 管理生命周期的标题生成执行器。</p>
  */
 @Configuration
-@EnableConfigurationProperties({ChatProperties.class, TitleSummaryProperties.class})
+@EnableConfigurationProperties({
+        ChatProperties.class,
+        TitleSummaryProperties.class,
+        IntentProperties.class
+})
 public class ChatConfig {
 
     /**

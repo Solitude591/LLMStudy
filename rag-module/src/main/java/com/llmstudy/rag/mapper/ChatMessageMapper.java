@@ -126,6 +126,15 @@ public interface ChatMessageMapper {
     int updateTransformContent(@Param("messageId") String messageId,
                                @Param("transformContent") String transformContent);
 
+    /** 只回写扩展元数据，避免与其他异步字段更新相互覆盖。 */
+    @Update("""
+            UPDATE chat_message
+            SET metadata = #{metadata}
+            WHERE message_id = #{messageId}
+            """)
+    int updateMetadata(@Param("messageId") String messageId,
+                       @Param("metadata") String metadata);
+
     @Delete("DELETE FROM chat_message WHERE message_id = #{messageId}")
     int deleteByMessageId(@Param("messageId") String messageId);
 

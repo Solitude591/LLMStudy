@@ -74,6 +74,9 @@ rag:
     initial-title-max-length: ${RAG_CHAT_INITIAL_TITLE_MAX_LENGTH:10}
     # 登录功能接入前使用的默认用户标识
     default-user-id: ${RAG_CHAT_DEFAULT_USER_ID:default}
+    intent:
+      # 意图识别可使用更轻量的模型；留空时复用主聊天模型
+      model: ${INTENT_MODEL:}
     title-summary:
       # 标题生成使用的轻量模型；留空则沿用主对话模型
       model: ${TITLE_SUMMARY_MODEL:deepseek-v4-flash}
@@ -104,11 +107,11 @@ rag:
     worker-id: ${RAG_SNOWFLAKE_WORKER_ID:1}
 
   reranker:
-    # 本地 BGE ReRanker；把 ONNX 模型与 tokenizer 放到 model-path 指定目录后，
-    # 设置 BGE_RERANKER_ENABLED=true 即可启用，无需重新打包。
-    enabled: ${BGE_RERANKER_ENABLED:false}
-    model-path: ${BGE_RERANKER_MODEL_PATH:./models/bge-reranker-v2-m3/model_int8.onnx}
-    tokenizer-path: ${BGE_RERANKER_TOKENIZER_PATH:./models/bge-reranker-v2-m3}
+    # 模型不打入 JAR；部署时将 models/bge-reranker 放在 JAR 同级目录，
+    # 或通过环境变量指向其他外部路径。
+    enabled: ${BGE_RERANKER_ENABLED:true}
+    model-path: ${BGE_RERANKER_MODEL_PATH:./models/bge-reranker/model_quantized.onnx}
+    tokenizer-path: ${BGE_RERANKER_TOKENIZER_PATH:./models/bge-reranker/tokenizer.json}
     # pair 分词最大长度与推理批次大小
     max-length: ${BGE_RERANKER_MAX_LENGTH:512}
     batch-size: ${BGE_RERANKER_BATCH_SIZE:4}

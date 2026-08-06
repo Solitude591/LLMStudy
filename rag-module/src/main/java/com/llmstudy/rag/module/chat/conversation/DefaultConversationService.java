@@ -9,6 +9,8 @@ import com.llmstudy.rag.mapper.ChatMessageMapper;
 import com.llmstudy.rag.util.SnowflakeIdGenerator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.UUID;
@@ -35,11 +37,16 @@ public class DefaultConversationService implements ConversationService {
     /** 生成趋势递增的消息业务 ID；会话 ID 单独使用 UUID。 */
     private final SnowflakeIdGenerator idGenerator;
 
+    /** 聊天历史缓存。 */
+    private final ChatHistoryCache historyCache;
+
     public DefaultConversationService(ChatConversationMapper chatConversationMapper,
                                       ChatMessageMapper chatMessageMapper,
+                                      ChatHistoryCache historyCache,
                                       SnowflakeIdGenerator idGenerator) {
         this.chatConversationMapper = chatConversationMapper;
         this.chatMessageMapper = chatMessageMapper;
+        this.historyCache = historyCache;
         this.idGenerator = idGenerator;
     }
 
@@ -109,11 +116,13 @@ public class DefaultConversationService implements ConversationService {
     @Override
     @Transactional
     public void deleteConversation(String conversationId) {
+        // 确认会话存在
         requireConversation(conversationId);
         // 逻辑删除
         int updated = chatConversationMapper.updateStatus(
                 conversationId, ConversationStatus.DELETED);
         requireSingleRow(updated, "删除会话失败");
+        afterCommit(() -> historyCache.delete(conversationId));
     }
 
     /**
@@ -190,11 +199,20 @@ public class DefaultConversationService implements ConversationService {
         int inserted = chatMessageMapper.insert(message);
         requireSingleRow(inserted, "保存消息失败");
 
-        int touched = chatConversationMapper.touch(conversationId);
-        requireSingleRow(touched, "刷新会话时间失败");
+        int touched = chatConversationMapper.touchAndIncrementMessageVersion(
+                conversationId);
+        requireSingleRow(touched, "刷新会话消息版本失败");
 
         // 重新查询以返回数据库生成的自增主键和创建/更新时间。
-        return chatMessageMapper.findByMessageId(message.getMessageId());
+        ChatMessage saved = chatMessageMapper.findByMessageId(message.getMessageId());
+        ChatConversation versionedConversation =
+                chatConversationMapper.findByConversationId(conversationId);
+        long messageVersion = messageVersion(versionedConversation);
+
+        // 只有 MySQL 事务提交成功后才更新 Redis，避免产生幽灵消息。
+        afterCommit(() -> historyCache.push(
+                conversationId, saved, messageVersion));
+        return saved;
     }
 
     /**
@@ -285,11 +303,46 @@ public class DefaultConversationService implements ConversationService {
      */
     @Override
     public List<ChatMessage> listRecentMessages(String conversationId, int limit) {
-        requireConversation(conversationId);
+        ChatConversation conversation = requireConversation(conversationId);
         if (limit <= 0) {
             return List.of();
         }
-        return chatMessageMapper.findRecentByConversationId(conversationId, limit);
+        long messageVersion = messageVersion(conversation);
+        // 优先读Redis缓存
+        List<ChatMessage> cached = historyCache.get(
+                conversationId, messageVersion);
+        if (cached != null) {
+            // 窗口和调用方limit配置不一致的情况，多退少不补
+            return cached.size() <= limit ? cached
+                    : cached.subList(cached.size() - limit, cached.size());
+        }
+        List<ChatMessage> messages = chatMessageMapper.findRecentByConversationId(
+                conversationId, limit);
+        historyCache.replace(conversationId, messages, messageVersion);
+        return messages;
+    }
+
+    /** 读取数据库消息版本；旧数据或测试对象未设置时按初始版本 0 处理。 */
+    private long messageVersion(ChatConversation conversation) {
+        return conversation.getMessageVersion() == null
+                ? 0L : conversation.getMessageVersion();
+    }
+
+    /** 将缓存副作用延迟到事务成功提交后执行。 */
+    private void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            action.run();
+                        }
+                    });
+            return;
+        }
+        // 兼容不经过 Spring 事务代理的单元测试或内部调用。
+        action.run();
     }
 
     /**

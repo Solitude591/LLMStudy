@@ -201,6 +201,7 @@ CREATE TABLE IF NOT EXISTS `chat_conversation`
     `user_id`         VARCHAR(64)   NOT NULL COMMENT '用户唯一标识',
     `title`           VARCHAR(255)  NOT NULL DEFAULT '' COMMENT '会话标题',
     `status`          VARCHAR(32)   NOT NULL DEFAULT 'ACTIVE' COMMENT '会话状态：ACTIVE-活跃，ARCHIVED-已归档，DELETED-已删除',
+    `message_version` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '消息版本，每新增一条消息递增',
     `created_at`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -209,6 +210,23 @@ CREATE TABLE IF NOT EXISTS `chat_conversation`
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci COMMENT = '聊天会话表';
+
+-- 兼容已经创建过的 chat_conversation 表：增加消息版本用于校验 Redis 历史窗口。
+SET @chat_message_version_column_exists = (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'chat_conversation'
+      AND COLUMN_NAME = 'message_version'
+);
+SET @chat_message_version_column_sql = IF(
+    @chat_message_version_column_exists = 0,
+    'ALTER TABLE `chat_conversation` ADD COLUMN `message_version` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT ''消息版本，每新增一条消息递增'' AFTER `status`',
+    'SELECT 1'
+);
+PREPARE chat_message_version_column_stmt FROM @chat_message_version_column_sql;
+EXECUTE chat_message_version_column_stmt;
+DEALLOCATE PREPARE chat_message_version_column_stmt;
 
 
 CREATE TABLE IF NOT EXISTS `chat_message`

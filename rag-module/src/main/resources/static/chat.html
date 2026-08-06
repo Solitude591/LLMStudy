@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="用于测试 RAG Module 同步与流式聊天接口的本地聊天页面">
-    <title>RAG Chat · 接口测试</title>
+    <title>RAG Studio · 知识问答工作台</title>
     <link rel="stylesheet" href="css/chat.css">
 </head>
 <body>
@@ -12,24 +12,29 @@
 <div class="chat-app">
     <aside id="sidebar" class="sidebar" aria-label="会话列表">
         <div class="brand-row">
-            <div class="brand-mark" aria-hidden="true">R</div>
+            <div class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img">
+                    <path d="M7 6.5h7.2a3.3 3.3 0 0 1 0 6.6H7m5.3 0 4.2 4.4M7 4v16"/>
+                </svg>
+            </div>
             <div>
-                <strong>RAG Chat</strong>
-                <span>接口测试工作台</span>
+                <strong>RAG Studio</strong>
+                <span>Knowledge workspace</span>
             </div>
             <button id="closeSidebarButton" class="icon-button mobile-only" type="button"
                     aria-label="关闭会话栏">×</button>
         </div>
 
         <button id="newChatButton" class="new-chat-button" type="button">
-            <span aria-hidden="true">＋</span>
+            <span class="new-chat-icon" aria-hidden="true">＋</span>
             新建对话
+            <span class="new-chat-shortcut" aria-hidden="true">N</span>
         </button>
 
         <label class="session-search">
             <span class="visually-hidden">搜索会话</span>
             <span aria-hidden="true">⌕</span>
-            <input id="sessionSearchInput" type="search" placeholder="搜索本地会话" autocomplete="off">
+            <input id="sessionSearchInput" type="search" placeholder="搜索数据库会话" autocomplete="off">
         </label>
 
         <div class="session-heading">
@@ -37,7 +42,7 @@
             <span id="sessionCount">0</span>
         </div>
 
-        <!-- 当前 Controller 没有会话列表接口，因此这里展示浏览器本地保存的测试会话。 -->
+        <!-- 会话列表和历史消息均从 MySQL 实时读取。 -->
         <nav id="sessionList" class="session-list" aria-label="最近会话"></nav>
 
         <div class="sidebar-settings">
@@ -79,9 +84,15 @@
                 </button>
             </div>
 
-            <div class="header-status">
-                <span id="requestStatus" class="status-label">准备就绪</span>
-                <span class="status-orb" aria-hidden="true"></span>
+            <div class="header-actions">
+                <div class="rag-mode-badge" title="自动识别意图并按需进入 RAG 流程">
+                    <span class="rag-mode-icon" aria-hidden="true">✦</span>
+                    <span>RAG 智能路由</span>
+                </div>
+                <div class="header-status">
+                    <span id="requestStatus" class="status-label">准备就绪</span>
+                    <span class="status-orb" aria-hidden="true"></span>
+                </div>
             </div>
         </header>
 
@@ -94,6 +105,11 @@
             <div id="errorBanner" class="error-banner" role="alert" hidden></div>
 
             <form id="composerForm" class="composer-form">
+                <div class="composer-context" aria-hidden="true">
+                    <span class="composer-context-icon">✦</span>
+                    <span>智能路由 · 知识库增强</span>
+                    <span class="composer-context-status">已就绪</span>
+                </div>
                 <textarea id="messageInput" rows="1" maxlength="12000"
                           placeholder="输入问题，Enter 发送，Shift + Enter 换行"
                           aria-label="聊天消息"></textarea>
@@ -108,7 +124,11 @@
                 </div>
             </form>
 
-            <p class="composer-hint">会话记录保存在 MySQL；侧栏展示数据仅保存在当前浏览器。</p>
+            <p class="composer-hint">
+                <span>回答可能存在误差，请结合原始资料判断</span>
+                <span aria-hidden="true">·</span>
+                <span>会话落库 MySQL</span>
+            </p>
         </section>
     </main>
 </div>

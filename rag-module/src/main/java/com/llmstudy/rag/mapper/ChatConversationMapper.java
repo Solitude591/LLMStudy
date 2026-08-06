@@ -115,15 +115,15 @@ public interface ChatConversationMapper {
         return updateStatusValue(conversationId, status.value());
     }
 
-    /**
-     * 新增消息后刷新会话时间，保证会话列表按最近聊天排序。
-     */
+    /** 新增消息后刷新会话时间并递增版本，供 Redis 历史窗口做一致性校验。 */
     @Update("""
             UPDATE chat_conversation
-            SET updated_at = CURRENT_TIMESTAMP
+            SET updated_at = CURRENT_TIMESTAMP,
+                message_version = message_version + 1
             WHERE conversation_id = #{conversationId}
             """)
-    int touch(@Param("conversationId") String conversationId);
+    int touchAndIncrementMessageVersion(
+            @Param("conversationId") String conversationId);
 
     /**
      * 物理删除会话；数据库外键会级联删除所属消息。

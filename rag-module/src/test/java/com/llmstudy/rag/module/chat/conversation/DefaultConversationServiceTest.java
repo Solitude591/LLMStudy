@@ -10,6 +10,8 @@ import com.llmstudy.rag.util.SnowflakeIdGenerator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.UUID;
 
@@ -17,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -24,6 +27,7 @@ class DefaultConversationServiceTest {
 
     private ChatConversationMapper conversationMapper;
     private ChatMessageMapper messageMapper;
+    private ChatHistoryCache historyCache;
     private SnowflakeIdGenerator idGenerator;
     private DefaultConversationService chatService;
 
@@ -31,9 +35,10 @@ class DefaultConversationServiceTest {
     void setUp() {
         conversationMapper = mock(ChatConversationMapper.class);
         messageMapper = mock(ChatMessageMapper.class);
+        historyCache = mock(ChatHistoryCache.class);
         idGenerator = mock(SnowflakeIdGenerator.class);
         chatService = new DefaultConversationService(
-                conversationMapper, messageMapper, idGenerator);
+                conversationMapper, messageMapper, historyCache, idGenerator);
     }
 
     @Test
@@ -69,13 +74,18 @@ class DefaultConversationServiceTest {
         ChatConversation conversation = new ChatConversation();
         conversation.setConversationId("conversation-1");
         conversation.setConversationStatus(ConversationStatus.ACTIVE);
+        conversation.setMessageVersion(0L);
 
         when(conversationMapper.findByConversationId("conversation-1"))
                 .thenReturn(conversation);
         when(idGenerator.nextId()).thenReturn(2001L);
         when(messageMapper.insert(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(1);
-        when(conversationMapper.touch("conversation-1")).thenReturn(1);
+        when(conversationMapper.touchAndIncrementMessageVersion(
+                "conversation-1")).thenAnswer(invocation -> {
+                    conversation.setMessageVersion(1L);
+                    return 1;
+                });
         when(messageMapper.findByMessageId("2001"))
                 .thenAnswer(invocation -> {
                     ChatMessage result = new ChatMessage();
@@ -86,19 +96,34 @@ class DefaultConversationServiceTest {
                     return result;
                 });
 
-        ChatMessage result = chatService.saveMessage(
-                "conversation-1", MessageType.USER, "你好", 42, "test-model");
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            ChatMessage result = chatService.saveMessage(
+                    "conversation-1", MessageType.USER,
+                    "你好", 42, "test-model");
 
-        assertEquals("2001", result.getMessageId());
-        assertEquals(MessageType.USER, result.getMessageType());
+            assertEquals("2001", result.getMessageId());
+            assertEquals(MessageType.USER, result.getMessageType());
 
-        ArgumentCaptor<ChatMessage> captor =
-                ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).insert(captor.capture());
-        assertEquals("USER", captor.getValue().getType());
-        assertEquals(42, captor.getValue().getTokenCount());
-        assertEquals("test-model", captor.getValue().getModelName());
-        verify(conversationMapper).touch("conversation-1");
+            ArgumentCaptor<ChatMessage> captor =
+                    ArgumentCaptor.forClass(ChatMessage.class);
+            verify(messageMapper).insert(captor.capture());
+            assertEquals("USER", captor.getValue().getType());
+            assertEquals(42, captor.getValue().getTokenCount());
+            assertEquals("test-model", captor.getValue().getModelName());
+            verify(conversationMapper).touchAndIncrementMessageVersion(
+                    "conversation-1");
+
+            verify(historyCache, never()).push(
+                    "conversation-1", result, 1L);
+            TransactionSynchronizationManager.getSynchronizations().forEach(
+                    TransactionSynchronization::afterCommit);
+            verify(historyCache).push("conversation-1", result, 1L);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
     }
 
     @Test
@@ -116,6 +141,7 @@ class DefaultConversationServiceTest {
 
         verify(conversationMapper).updateStatus(
                 "conversation-1", ConversationStatus.DELETED);
+        verify(historyCache).delete("conversation-1");
     }
 
     @Test

@@ -24,6 +24,9 @@ public class ChatConversation {
     /** 会话状态，MyBatis 使用枚举名称持久化为大写字符串。 */
     private ConversationStatus status;
 
+    /** 消息版本；每保存一条消息递增，用于校验历史缓存新鲜度。 */
+    private Long messageVersion;
+
     /** 创建时间，由数据库写入。 */
     private LocalDateTime createdAt;
 
@@ -81,6 +84,14 @@ public class ChatConversation {
         this.status = conversationStatus;
     }
 
+    public Long getMessageVersion() {
+        return messageVersion;
+    }
+
+    public void setMessageVersion(Long messageVersion) {
+        this.messageVersion = messageVersion;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
@@ -105,6 +116,7 @@ public class ChatConversation {
                 ", userId='" + userId + '\'' +
                 ", title='" + title + '\'' +
                 ", status='" + status + '\'' +
+                ", messageVersion=" + messageVersion +
                 ", createdAt=" + createdAt +
                 ", updatedAt=" + updatedAt +
                 '}';

@@ -46,6 +46,19 @@ class BgeCandidateRerankerTest {
                 .rerank("question", input));
     }
 
+    @Test
+    void invalidScoresKeepOriginalOrder() {
+        RerankerProperties properties = new RerankerProperties();
+        properties.setEnabled(true);
+        BgeScoringModel model = mock(BgeScoringModel.class);
+        when(model.scoreAll(anyList(), eq("question")))
+                .thenReturn(Response.from(List.of(Double.NaN, 0.9)));
+        List<RetrievalCandidate> input = List.of(candidate("a"), candidate("b"));
+
+        assertEquals(input, new BgeCandidateReranker(properties, model)
+                .rerank("question", input));
+    }
+
     private static RetrievalCandidate candidate(String id) {
         return new RetrievalCandidate(id, "text-" + id, Map.of(), 1.0, null);
     }

@@ -30,7 +30,8 @@ public class BgeCandidateReranker implements CandidateReranker {
     public List<RetrievalCandidate> rerank(String question,
                                            List<RetrievalCandidate> candidates) {
         // 0/1 个候选不存在排序收益，避免无效加载本地模型。
-        if (!properties.isEnabled() || candidates.size() <= 1) {
+        if (!properties.isEnabled() || candidates == null
+                || candidates.size() <= 1 || question == null || question.isBlank()) {
             return candidates;
         }
         try {
@@ -40,6 +41,10 @@ public class BgeCandidateReranker implements CandidateReranker {
             List<Double> scores = scoringModel.scoreAll(segments, question).content();
             if (scores == null || scores.size() != candidates.size()) {
                 log.warn("BGE 评分数量不一致，保持 RRF 排序");
+                return candidates;
+            }
+            if (scores.stream().anyMatch(score -> score == null || !Double.isFinite(score))) {
+                log.warn("BGE 评分包含非法值，保持 RRF 排序");
                 return candidates;
             }
             // 通过原下标关联评分，重建候选时同时保留 RRF score 供审计。

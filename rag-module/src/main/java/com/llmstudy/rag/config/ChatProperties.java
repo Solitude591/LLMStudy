@@ -11,14 +11,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "rag.chat")
 public class ChatProperties {
 
-    /** 每次请求最多加载的历史消息数量，避免模型上下文无限增长。 */
-    private int historyLimit = 20;
+    /** 每次请求最多加载的历史消息数量，同时作为 Redis 滑动窗口大小。 */
+    private int historyLimit = 10;
 
     /** AI 标题生成完成前，使用首次问题生成的临时标题最大字符数。 */
     private int initialTitleMaxLength = 10;
 
     /** 登录功能接入前使用的默认用户标识。 */
     private String defaultUserId = "default";
+
+    /** Redis 历史窗口缓存 TTL（秒），会话闲置超过该时长后缓存自然淘汰。 */
+    private int historyCacheTtlSeconds = 86400;
 
     public int getHistoryLimit() {
         return historyLimit;
@@ -53,5 +56,17 @@ public class ChatProperties {
                     "rag.chat.default-user-id 不能为空");
         }
         this.defaultUserId = defaultUserId.trim();
+    }
+
+    public int getHistoryCacheTtlSeconds() {
+        return historyCacheTtlSeconds;
+    }
+
+    public void setHistoryCacheTtlSeconds(int historyCacheTtlSeconds) {
+        if (historyCacheTtlSeconds <= 0) {
+            throw new IllegalArgumentException(
+                    "rag.chat.history-cache-ttl-seconds 必须大于 0");
+        }
+        this.historyCacheTtlSeconds = historyCacheTtlSeconds;
     }
 }

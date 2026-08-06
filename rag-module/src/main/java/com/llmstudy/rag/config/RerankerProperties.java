@@ -5,20 +5,23 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * 本地 BGE ReRanker 配置。
  *
- * <p>模型文件放在配置指定的外部目录，不打进 JAR；下载模型前保持 enabled=false，
- * 检索器在模型禁用时跳过重排直接返回原排序。</p>
+ * <p>模型路径同时支持 {@code classpath:} 资源与外部文件，默认使用
+ * JAR 同级的 {@code models/bge-reranker} 目录；禁用时检索器
+ * 跳过重排，直接保留原排序。</p>
  */
 @ConfigurationProperties(prefix = "rag.reranker")
 public class RerankerProperties {
 
-    /** 是否启用本地 BGE ReRanker；模型未下载时保持 false。 */
-    private boolean enabled = false;
+    /** 是否启用本地 BGE ReRanker；可在低资源环境显式关闭。 */
+    private boolean enabled = true;
 
     /** ONNX 模型文件路径。 */
-    private String modelPath = "./models/bge-reranker-v2-m3/model_int8.onnx";
+    private String modelPath =
+            "./models/bge-reranker/model_quantized.onnx";
 
-    /** DJL Hugging Face tokenizer 所在目录。 */
-    private String tokenizerPath = "./models/bge-reranker-v2-m3";
+    /** DJL Hugging Face tokenizer.json 路径，也可指向包含该文件的外部目录。 */
+    private String tokenizerPath =
+            "./models/bge-reranker/tokenizer.json";
 
     /** pair 分词最大长度，超过部分截断。 */
     private int maxLength = 512;

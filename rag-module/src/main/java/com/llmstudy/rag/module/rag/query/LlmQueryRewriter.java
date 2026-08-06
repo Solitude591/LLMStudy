@@ -2,10 +2,10 @@ package com.llmstudy.rag.module.rag.query;
 
 import com.llmstudy.rag.module.rag.model.RagRequest;
 import com.llmstudy.rag.module.rag.model.RewrittenQuery;
-import org.springframework.ai.chat.model.ChatModel;
+import com.llmstudy.rag.module.llm.LlmTraceContext;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.PromptTemplate;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
@@ -19,23 +19,35 @@ import java.util.Map;
 @Component
 public class LlmQueryRewriter implements QueryRewriter {
 
-    private final ChatModel chatModel;
-    private final String template;
+    private final ChatClient chatClient;
+    private final String systemTemplate;
+    private final String userTemplate;
 
-    public LlmQueryRewriter(ChatModel chatModel,
-                            @Value("classpath:prompts/rag/query-rewrite.st") Resource resource) {
-        this.chatModel = chatModel;
-        this.template = read(resource);
+    public LlmQueryRewriter(
+            ChatClient chatClient,
+            @Value("classpath:prompts/rag/query-rewrite/system.st")
+            Resource systemResource,
+            @Value("classpath:prompts/rag/query-rewrite/user.st")
+            Resource userResource) {
+        this.chatClient = chatClient;
+        this.systemTemplate = read(systemResource);
+        this.userTemplate = read(userResource);
     }
 
     /** {@inheritDoc} */
     @Override
     public RewrittenQuery rewrite(RagRequest request) {
-        String prompt = new PromptTemplate(template).create(Map.of(
+        String userMessage = new PromptTemplate(userTemplate).create(Map.of(
                 "query", request.question(),
                 "conversationContext", request.conversationContext())).getContents();
         // 改写阶段是检索前置条件，空响应不应静默退回原问题掩盖故障。
-        ChatResponse response = chatModel.call(new Prompt(prompt));
+        ChatResponse response = chatClient.prompt()
+                .system(systemTemplate)
+                .user(userMessage)
+                .advisors(spec -> spec.params(
+                        LlmTraceContext.params("query-rewrite")))
+                .call()
+                .chatResponse();
         if (response == null || response.getResult() == null
                 || response.getResult().getOutput() == null
                 || response.getResult().getOutput().getText() == null

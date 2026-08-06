@@ -2,6 +2,7 @@ package com.llmstudy.rag.module.chat.title;
 
 import com.llmstudy.rag.config.TitleSummaryProperties;
 import com.llmstudy.rag.module.chat.conversation.ConversationService;
+import com.llmstudy.rag.module.llm.LlmFileLoggingAdvisor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -51,7 +52,7 @@ public class TitleSummaryService {
     public void generateTitleAsync(String conversationId, String firstQuery) {
         try {
             // 标题生成与主对话使用独立异步任务，慢响应不会延长聊天接口耗时。
-            String aiTitle = generateTitle(firstQuery);
+            String aiTitle = generateTitle(conversationId, firstQuery);
             if (aiTitle == null || aiTitle.isBlank()) {
                 log.warn("标题生成结果为空，保留临时标题: conversationId={}", conversationId);
                 return;
@@ -69,10 +70,14 @@ public class TitleSummaryService {
     /**
      * 调用轻量模型生成标题；配置了 rag.chat.title-summary.model 时按次覆盖主模型。
      */
-    private String generateTitle(String firstQuery) {
+    private String generateTitle(String conversationId, String firstQuery) {
         ChatClient.ChatClientRequestSpec prompt = chatClient.prompt()
                 .system(SYSTEM_PROMPT_TEMPLATE.formatted(properties.getMaxTitleLength()))
-                .user("用户的第一句话：" + firstQuery);
+                .user("用户的第一句话：" + firstQuery)
+                .advisors(spec -> spec
+                        .param(LlmFileLoggingAdvisor.STAGE_KEY, "title-summary")
+                        .param(LlmFileLoggingAdvisor.CONVERSATION_ID_KEY,
+                                conversationId));
         if (properties.getModel() != null && !properties.getModel().isBlank()) {
             // Spring AI 2.x 使用 options() 覆盖模型，替代 1.x 的 model() 方法
             prompt = prompt.options(

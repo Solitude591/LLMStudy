@@ -2,6 +2,7 @@ package com.llmstudy.rag.module.chat.intent;
 
 import com.llmstudy.rag.config.IntentProperties;
 import com.llmstudy.rag.module.chat.model.IntentRecognitionResult;
+import com.llmstudy.rag.module.llm.LlmTraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -50,6 +51,8 @@ public class LlmIntentRecognizer implements IntentRecognizer {
             ChatClient.ChatClientRequestSpec prompt = chatClient.prompt()
                     .system(systemPrompt)
                     .user(buildUserPrompt(history, query.trim()))
+                    .advisors(spec -> spec.params(
+                            LlmTraceContext.params("intent-recognition")))
                     .options(OpenAiChatOptions.builder().temperature(0.0));
             if (properties.getModel() != null && !properties.getModel().isBlank()) {
                 prompt = prompt.options(OpenAiChatOptions.builder()

@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -41,13 +42,15 @@ class RagPromptInjectorTest {
                 new RewrittenQuery(request.question(), "RAG 表 3 F1 结果"),
                 List.of(candidate));
 
-        assertTrue(result.prompt().contains("实验设置、数据集、指标"));
-        assertTrue(result.prompt().contains("主意图: EXPERIMENT_OR_RESULT"));
-        assertTrue(result.prompt().contains("方法或模型: Hybrid RAG"));
-        assertTrue(result.prompt().contains("数据集: HotpotQA"));
-        assertTrue(result.prompt().contains("评价指标: F1"));
-        assertTrue(result.prompt().contains("[1]"));
-        assertTrue(result.prompt().contains("F1 提升了 2.1 个百分点"));
+        assertTrue(result.prompt().systemMessage().contains("实验设置、数据集、指标"));
+        assertTrue(result.prompt().userMessage().contains("主意图: EXPERIMENT_OR_RESULT"));
+        assertTrue(result.prompt().userMessage().contains("方法或模型: Hybrid RAG"));
+        assertTrue(result.prompt().userMessage().contains("数据集: HotpotQA"));
+        assertTrue(result.prompt().userMessage().contains("评价指标: F1"));
+        assertTrue(result.prompt().userMessage().contains("[1]"));
+        assertTrue(result.prompt().userMessage().contains("F1 提升了 2.1 个百分点"));
+        assertTrue(result.prompt().userMessage().contains("<reference_information>"));
+        assertFalse(result.prompt().systemMessage().contains("F1 提升了 2.1 个百分点"));
         assertEquals("chunk-1", result.references().getFirst().chunkId());
     }
 
@@ -68,11 +71,12 @@ class RagPromptInjectorTest {
         RagPromptTemplateRegistry registry = mock(RagPromptTemplateRegistry.class);
         when(registry.select(RagAnswerMode.PAPER_SUMMARY)).thenReturn(
                 new RagPromptTemplateRegistry.TemplateSelection(
-                        RagAnswerMode.PAPER_SUMMARY, "broken {missing}", false));
+                        RagAnswerMode.PAPER_SUMMARY, "broken {missing}",
+                        "user {intentContext}\n{information}\n{question}", false));
         when(registry.select(RagAnswerMode.GENERIC)).thenReturn(
                 new RagPromptTemplateRegistry.TemplateSelection(
-                        RagAnswerMode.GENERIC,
-                        "generic {intentContext}\n{information}\n{question}", false));
+                        RagAnswerMode.GENERIC, "generic system",
+                        "user {intentContext}\n{information}\n{question}", false));
         RagRequest request = new RagRequest("question", "无",
                 new RagIntentContext(RagAnswerMode.PAPER_SUMMARY,
                         RagFocusInformation.empty()));
@@ -81,7 +85,8 @@ class RagPromptInjectorTest {
                 request, new RewrittenQuery("question", "rewritten"),
                 List.of(new RetrievalCandidate("chunk", "evidence", Map.of(), 1, null)));
 
-        assertTrue(result.prompt().startsWith("generic 主意图: PAPER_SUMMARY"));
-        assertTrue(result.prompt().contains("evidence"));
+        assertEquals("generic system", result.prompt().systemMessage());
+        assertTrue(result.prompt().userMessage().contains("主意图: PAPER_SUMMARY"));
+        assertTrue(result.prompt().userMessage().contains("evidence"));
     }
 }

@@ -1,6 +1,7 @@
 package com.llmstudy.rag.module.chat.flow;
 
 import com.llmstudy.rag.module.rag.model.RagReference;
+import com.llmstudy.rag.module.llm.model.LlmPrompt;
 import org.springframework.ai.chat.messages.Message;
 
 import java.util.List;
@@ -22,7 +23,7 @@ public interface ChatFlow {
     }
 
     /** Flow 阶段产生的 Prompt、改写结果、引用或固定回答。 */
-    record FlowPreparation(String prompt, String rewrittenQuery,
+    record FlowPreparation(LlmPrompt prompt, String rewrittenQuery,
                            List<RagReference> references, String fixedAnswer) {
         public FlowPreparation {
             references = references == null ? List.of() : List.copyOf(references);

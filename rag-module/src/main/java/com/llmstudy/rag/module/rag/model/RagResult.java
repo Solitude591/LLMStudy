@@ -1,9 +1,11 @@
 package com.llmstudy.rag.module.rag.model;
 
+import com.llmstudy.rag.module.llm.model.LlmPrompt;
+
 import java.util.List;
 
 /** 在线 RAG Pipeline 的最终输出。 */
-public record RagResult(String prompt, RewrittenQuery rewrittenQuery,
+public record RagResult(LlmPrompt prompt, RewrittenQuery rewrittenQuery,
                         List<RagReference> references) {
 
     public RagResult {

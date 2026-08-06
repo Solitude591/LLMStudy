@@ -7,6 +7,7 @@ import com.llmstudy.rag.module.rag.model.RagFocusInformation;
 import com.llmstudy.rag.module.rag.model.RagRequest;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
 import com.llmstudy.rag.module.rag.model.RewrittenQuery;
+import com.llmstudy.rag.module.llm.model.LlmPrompt;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,15 +68,15 @@ public class RagPromptInjector {
                 "information", information.toString().trim(),
                 "question", request.question(),
                 "intentContext", formatIntentContext(request));
-        String prompt = render(selection, variables);
+        LlmPrompt prompt = render(selection, variables);
         return new Injection(prompt, references);
     }
 
     /** 渲染专用模板，变量错误等运行时故障会再回退通用模板。 */
-    private String render(RagPromptTemplateRegistry.TemplateSelection selection,
-                          Map<String, Object> variables) {
+    private LlmPrompt render(RagPromptTemplateRegistry.TemplateSelection selection,
+                             Map<String, Object> variables) {
         try {
-            return renderTemplate(selection.template(), variables);
+            return renderPrompt(selection, variables);
         } catch (RuntimeException e) {
             // 通用模板本身失败时无更低级别的安全模板，必须暴露配置错误。
             if (selection.effectiveMode() == RagAnswerMode.GENERIC) {
@@ -83,9 +84,17 @@ public class RagPromptInjector {
             }
             log.warn("RAG 专用回答模板渲染失败，回退通用模板: mode={}",
                     selection.effectiveMode(), e);
-            return renderTemplate(templateRegistry.select(RagAnswerMode.GENERIC).template(),
-                    variables);
+            return renderPrompt(templateRegistry.select(RagAnswerMode.GENERIC), variables);
         }
+    }
+
+    /** 分别渲染稳定规则和运行时数据，保留消息角色边界。 */
+    private static LlmPrompt renderPrompt(
+            RagPromptTemplateRegistry.TemplateSelection selection,
+            Map<String, Object> variables) {
+        String systemMessage = renderTemplate(selection.systemTemplate(), Map.of());
+        String userMessage = renderTemplate(selection.userTemplate(), variables);
+        return new LlmPrompt(systemMessage, userMessage);
     }
 
     /** 使用 Spring AI StringTemplate 渲染已选模板。 */
@@ -134,7 +143,7 @@ public class RagPromptInjector {
     }
 
     /** Prompt 注入阶段的文本与结构化引用输出。 */
-    public record Injection(String prompt, List<RagReference> references) {
+    public record Injection(LlmPrompt prompt, List<RagReference> references) {
         public Injection {
             references = List.copyOf(references);
         }

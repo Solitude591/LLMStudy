@@ -67,6 +67,10 @@ mineru:
   token: ${MINERU_TOKEN}
 
 rag:
+  llm-log:
+    # 独立保存完整 LLM request/response；相对路径以应用启动目录为基准
+    path: ${RAG_LLM_LOG_PATH:logs}
+
   chat:
     # 每次请求最多加载的历史消息数
     history-limit: ${RAG_CHAT_HISTORY_LIMIT:20}

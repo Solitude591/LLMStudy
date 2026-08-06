@@ -9,6 +9,7 @@ import com.llmstudy.rag.module.rag.model.RewrittenQuery;
 import com.llmstudy.rag.module.rag.prompt.RagPromptInjector;
 import com.llmstudy.rag.module.rag.query.QueryRewriter;
 import com.llmstudy.rag.module.rag.retrieval.HybridRetriever;
+import com.llmstudy.rag.module.llm.model.LlmPrompt;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -39,12 +40,14 @@ class RagPipelineTest {
         when(retriever.retrieve(rewritten)).thenReturn(retrieval);
         when(aggregator.aggregate(rewritten, retrieval)).thenReturn(List.of(candidate));
         when(injector.inject(request, rewritten, List.of(candidate)))
-                .thenReturn(new RagPromptInjector.Injection("prompt", List.of(reference)));
+                .thenReturn(new RagPromptInjector.Injection(
+                        new LlmPrompt("system", "user"), List.of(reference)));
 
         RagResult result = new RagPipeline(rewriter, retriever, aggregator, injector)
                 .execute(request);
 
-        assertEquals("prompt", result.prompt());
+        assertEquals("system", result.prompt().systemMessage());
+        assertEquals("user", result.prompt().userMessage());
         assertEquals("rewritten", result.rewrittenQuery().rewrittenQuestion());
         var ordered = inOrder(rewriter, retriever, aggregator, injector);
         ordered.verify(rewriter).rewrite(request);

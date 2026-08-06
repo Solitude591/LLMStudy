@@ -23,22 +23,24 @@ import static org.mockito.Mockito.when;
 
 class RagPromptTemplateRegistryTest {
 
-    private static final String GENERIC_PATH = "classpath:prompts/rag/answer.st";
+    private static final String GENERIC_PATH =
+            "classpath:prompts/rag/answer/system/generic.st";
+    private static final String USER_PATH = "classpath:prompts/rag/answer/user.st";
 
     @Test
     void loadsDistinctTemplateForEverySpecializedMode() {
         RagPromptTemplateRegistry registry =
                 new RagPromptTemplateRegistry(new DefaultResourceLoader());
-        String generic = registry.select(RagAnswerMode.GENERIC).template();
+        String generic = registry.select(RagAnswerMode.GENERIC).systemTemplate();
 
         for (RagAnswerMode mode : EnumSet.complementOf(
                 EnumSet.of(RagAnswerMode.GENERIC))) {
             RagPromptTemplateRegistry.TemplateSelection selection = registry.select(mode);
             assertEquals(mode, selection.effectiveMode());
             assertFalse(selection.fallback());
-            assertNotEquals(generic, selection.template());
-            assertTrue(selection.template().contains("{intentContext}"));
-            String rendered = new PromptTemplate(selection.template()).create(Map.of(
+            assertNotEquals(generic, selection.systemTemplate());
+            assertFalse(selection.systemTemplate().contains("{intentContext}"));
+            String rendered = new PromptTemplate(selection.userTemplate()).create(Map.of(
                     "intentContext", "intent",
                     "information", "evidence",
                     "question", "question")).getContents();
@@ -53,14 +55,16 @@ class RagPromptTemplateRegistryTest {
         ResourceLoader loader = mock(ResourceLoader.class);
         when(loader.getResource(anyString()))
                 .thenReturn(new ClassPathResource("missing-template.st"));
-        when(loader.getResource(GENERIC_PATH)).thenReturn(text("generic {question}"));
+        when(loader.getResource(GENERIC_PATH)).thenReturn(text("generic system"));
+        when(loader.getResource(USER_PATH)).thenReturn(text("user {question}"));
 
         RagPromptTemplateRegistry.TemplateSelection selection =
                 new RagPromptTemplateRegistry(loader).select(RagAnswerMode.PAPER_SUMMARY);
 
         assertEquals(RagAnswerMode.GENERIC, selection.effectiveMode());
         assertTrue(selection.fallback());
-        assertEquals("generic {question}", selection.template());
+        assertEquals("generic system", selection.systemTemplate());
+        assertEquals("user {question}", selection.userTemplate());
     }
 
     @Test

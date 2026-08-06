@@ -16,6 +16,8 @@ import com.llmstudy.rag.module.chat.model.ChatStreamEvent;
 import com.llmstudy.rag.module.chat.model.IntentRecognitionResult;
 import com.llmstudy.rag.module.chat.stream.ChatStreamExecutor;
 import com.llmstudy.rag.module.chat.title.TitleSummaryService;
+import com.llmstudy.rag.module.llm.LlmFileLoggingAdvisor;
+import com.llmstudy.rag.module.llm.LlmTraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -108,6 +110,15 @@ public class ChatOrchestrator {
 
     /** 根据意图选择聊天 Flow，并回写识别 metadata 与查询改写结果。 */
     private ChatPreparation route(ChatBase base, boolean routeIntent) {
+        try (LlmTraceContext ignored = LlmTraceContext.open(
+                base.conversation().getConversationId(),
+                base.userMessage().getMessageId())) {
+            return routeWithinTrace(base, routeIntent);
+        }
+    }
+
+    /** 在已建立日志关联上下文的条件下执行意图识别和 RAG 路由。 */
+    private ChatPreparation routeWithinTrace(ChatBase base, boolean routeIntent) {
         ChatFlow flow = commonChatFlow;
         IntentRecognitionResult intent = null;
         if (routeIntent) {
@@ -157,8 +168,19 @@ public class ChatOrchestrator {
      */
     public ChatAnswer ask(ChatCommand command) {
         ChatPreparation preparation = prepare(command, false);
-        org.springframework.ai.chat.model.ChatResponse response = chatClient.prompt()
-                .messages(preparation.history()).user(preparation.prompt())
+        ChatClient.ChatClientRequestSpec request = chatClient.prompt();
+        if (preparation.prompt().hasSystemMessage()) {
+            request = request.system(preparation.prompt().systemMessage());
+        }
+        org.springframework.ai.chat.model.ChatResponse response = request
+                .messages(preparation.history())
+                .user(preparation.prompt().userMessage())
+                .advisors(spec -> spec
+                        .param(LlmFileLoggingAdvisor.STAGE_KEY, "final-answer")
+                        .param(LlmFileLoggingAdvisor.CONVERSATION_ID_KEY,
+                                preparation.conversationId())
+                        .param(LlmFileLoggingAdvisor.MESSAGE_ID_KEY,
+                                preparation.userMessageId()))
                 .call().chatResponse();
         String content = ChatStreamExecutor.extractContent(response, true);
         ChatStreamExecutor.ResponseInfo info = ChatStreamExecutor.responseInfo(response);

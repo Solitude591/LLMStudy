@@ -1,6 +1,7 @@
 package com.llmstudy.rag.module.chat.model;
 
 import com.llmstudy.rag.module.rag.model.RagReference;
+import com.llmstudy.rag.module.llm.model.LlmPrompt;
 import org.springframework.ai.chat.messages.Message;
 
 import java.util.List;
@@ -8,7 +9,7 @@ import java.util.List;
 /** 已完成 Flow 准备的模型调用与持久化上下文。 */
 public record ChatPreparation(String conversationId, String conversationTitle,
                               String userMessageId, List<Message> history,
-                              String prompt, List<RagReference> ragReferences,
+                              LlmPrompt prompt, List<RagReference> ragReferences,
                               String fixedAnswer) {
 
     public ChatPreparation {

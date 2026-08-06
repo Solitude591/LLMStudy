@@ -5,6 +5,7 @@ import com.llmstudy.rag.enums.MessageType;
 import com.llmstudy.rag.module.chat.conversation.ConversationService;
 import com.llmstudy.rag.module.chat.model.ChatPreparation;
 import com.llmstudy.rag.module.chat.model.ChatStreamEvent;
+import com.llmstudy.rag.module.llm.LlmFileLoggingAdvisor;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.Usage;
@@ -46,9 +47,19 @@ public class ChatStreamExecutor {
         StringBuilder answer = new StringBuilder();
         AtomicReference<Integer> tokenCount = new AtomicReference<>();
         AtomicReference<String> modelName = new AtomicReference<>();
-        Flux<ChatStreamEvent> deltas = chatClient.prompt()
+        ChatClient.ChatClientRequestSpec request = chatClient.prompt();
+        if (preparation.prompt().hasSystemMessage()) {
+            request = request.system(preparation.prompt().systemMessage());
+        }
+        Flux<ChatStreamEvent> deltas = request
                 .messages(preparation.history())
-                .user(preparation.prompt())
+                .user(preparation.prompt().userMessage())
+                .advisors(spec -> spec
+                        .param(LlmFileLoggingAdvisor.STAGE_KEY, "final-answer")
+                        .param(LlmFileLoggingAdvisor.CONVERSATION_ID_KEY,
+                                preparation.conversationId())
+                        .param(LlmFileLoggingAdvisor.MESSAGE_ID_KEY,
+                                preparation.userMessageId()))
                 .stream()
                 .chatResponse()
                 .map(response -> {

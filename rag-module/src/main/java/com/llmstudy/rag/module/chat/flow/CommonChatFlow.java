@@ -1,5 +1,6 @@
 package com.llmstudy.rag.module.chat.flow;
 
+import com.llmstudy.rag.module.llm.model.LlmPrompt;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.stereotype.Component;
 
@@ -12,6 +13,7 @@ public class CommonChatFlow implements ChatFlow {
     /** {@inheritDoc} */
     @Override
     public FlowPreparation prepare(ChatFlowContext context) {
-        return new FlowPreparation(context.query(), null, List.of(), null);
+        return new FlowPreparation(LlmPrompt.userOnly(context.query()),
+                null, List.of(), null);
     }
 }

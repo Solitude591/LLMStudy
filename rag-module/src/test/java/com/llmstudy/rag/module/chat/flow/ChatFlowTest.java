@@ -24,7 +24,8 @@ class ChatFlowTest {
     void commonFlowKeepsOriginalQuery() {
         ChatFlow.FlowPreparation result = new CommonChatFlow()
                 .prepare(" original ", List.of());
-        assertEquals(" original ", result.prompt());
+        assertNull(result.prompt().systemMessage());
+        assertEquals(" original ", result.prompt().userMessage());
         assertNull(result.rewrittenQuery());
     }
 

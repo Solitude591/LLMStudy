@@ -43,7 +43,7 @@ public class DocumentParserRouter {
      */
     public DocumentParseResult parse(DocumentParseContext context) {
         // 数据库存储的扩展名仍统一规范化，以兼容历史数据中可能存在的点号或大小写差异。
-        String fileType = normalize(context.document().getFileType());
+        String fileType = normalize(context.version().getFileType());
         DocumentParserStrategy strategy = strategies.get(fileType);
         if (strategy == null) {
             throw new IllegalArgumentException("暂不支持解析该文件类型: ." + fileType);

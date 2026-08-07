@@ -47,6 +47,14 @@ elasticsearch:
   api-key: ${EMBEDDING_API_KEY}
   dimensions: ${EMBEDDING_DIMENSIONS:1536}
 
+mybatis:
+  mapper-locations: classpath:mapper/**/*.xml
+  type-aliases-package: com.llmstudy.rag.entity
+  configuration:
+    # 开启下划线转驼峰，version_id → versionId、content_hash → contentHash 等
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
 minio:
   endpoint: ${MINIO_ENDPOINT}
   access-key: ${MINIO_ACCESS_KEY}

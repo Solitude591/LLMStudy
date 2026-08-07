@@ -1,0 +1,63 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "refresh_interval": "1s"
+  },
+  "mappings": {
+    "dynamic": "strict",
+    "_meta": {
+      "schema_version": 1,
+      "description": "RAG document segment index"
+    },
+    "properties": {
+      "vector": {
+        "type": "dense_vector",
+        "dims": 1536,
+        "index": true,
+        "similarity": "cosine",
+        "index_options": {
+          "type": "int8_hnsw"
+        }
+      },
+      "text": {
+        "type": "text",
+        "analyzer": "standard"
+      },
+      "metadata": {
+        "type": "object",
+        "dynamic": "strict",
+        "properties": {
+          "doc_id": {
+            "type": "keyword",
+            "ignore_above": 128
+          },
+          "version_id": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 128
+              }
+            }
+          },
+          "parent_chunk_id": {
+            "type": "keyword",
+            "index": false,
+            "doc_values": false
+          },
+          "header_path": {
+            "type": "keyword",
+            "index": false,
+            "doc_values": false
+          },
+          "source_url": {
+            "type": "keyword",
+            "index": false,
+            "doc_values": false
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,7 @@
 package com.llmstudy.rag.config;
 
 import com.llmstudy.rag.dto.ApiResult;
+import com.llmstudy.rag.module.knowledge.document.DocumentVersionConflictException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -21,6 +22,16 @@ public class GlobalExceptionHandler {
     public ApiResult<Void> handleIllegalArgument(IllegalArgumentException e) {
         log.warn("参数校验失败: {}", e.getMessage());
         return ApiResult.fail(400, e.getMessage());
+    }
+
+    /**
+     * 版本指针或发布状态发生并发变化。
+     */
+    @ExceptionHandler(DocumentVersionConflictException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ApiResult<Void> handleDocumentVersionConflict(DocumentVersionConflictException e) {
+        log.warn("文档版本发布冲突: {}", e.getMessage());
+        return ApiResult.fail(409, e.getMessage());
     }
 
     /**

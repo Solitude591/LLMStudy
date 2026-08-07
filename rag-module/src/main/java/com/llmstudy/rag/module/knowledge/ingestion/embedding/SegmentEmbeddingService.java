@@ -4,8 +4,8 @@ package com.llmstudy.rag.module.knowledge.ingestion.embedding;
 public interface SegmentEmbeddingService {
 
     /**
-     * @param docId 已完成分片的文档 ID
+     * @param versionId 已完成分片的物理版本 ID
      * @return 本次实际写入向量存储的分片数
      */
-    int embedSegments(String docId);
+    int embedSegments(String versionId);
 }

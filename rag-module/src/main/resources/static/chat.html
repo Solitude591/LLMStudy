@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="用于测试 RAG Module 同步与流式聊天接口的本地聊天页面">
+    <meta name="description" content="用于管理知识文档版本并测试 RAG Module 对话接口的工作台">
     <title>RAG Studio · 知识问答工作台</title>
-    <link rel="stylesheet" href="css/chat.css">
+    <link rel="stylesheet" href="css/chat.css?v=20260807-2">
 </head>
 <body>
-<!-- 整个页面采用“会话侧栏 + 对话主区域”的双栏结构。 -->
+<!-- 页面由会话侧栏、对话主区域和知识库版本面板组成。 -->
 <div class="chat-app">
     <aside id="sidebar" class="sidebar" aria-label="会话列表">
         <div class="brand-row">
@@ -85,6 +85,11 @@
             </div>
 
             <div class="header-actions">
+                <button id="openKnowledgeButton" class="knowledge-trigger" type="button"
+                        aria-controls="knowledgePanel" aria-expanded="false">
+                    <span>知识库</span>
+                    <span id="knowledgeHeaderCount" class="knowledge-trigger-count">0</span>
+                </button>
                 <div class="rag-mode-badge" title="自动识别意图并按需进入 RAG 流程">
                     <span class="rag-mode-icon" aria-hidden="true">✦</span>
                     <span>RAG 智能路由</span>
@@ -131,10 +136,128 @@
             </p>
         </section>
     </main>
+
+    <div id="knowledgeBackdrop" class="knowledge-backdrop" hidden></div>
+
+    <aside id="knowledgePanel" class="knowledge-panel" aria-label="知识库版本管理">
+        <header class="knowledge-panel-header">
+            <div>
+                <p class="knowledge-eyebrow">KNOWLEDGE CONTROL</p>
+                <h2>知识库</h2>
+                <p>发布中的版本决定线上检索内容</p>
+            </div>
+            <button id="closeKnowledgeButton" class="knowledge-close-button" type="button"
+                    aria-label="关闭知识库面板">关闭</button>
+        </header>
+
+        <div class="knowledge-actions">
+            <button id="uploadDocumentButton" class="knowledge-primary-button" type="button">
+                上传新文档
+            </button>
+            <form id="attachDocumentForm" class="attach-document-form">
+                <label for="attachDocumentId">关联已有文档</label>
+                <div>
+                    <input id="attachDocumentId" type="text" maxlength="64"
+                           placeholder="输入 docId" autocomplete="off">
+                    <button type="submit">关联</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="knowledge-overview" aria-label="知识库状态概览">
+            <div>
+                <strong id="onlineDocumentCount">0</strong>
+                <span>已上线</span>
+            </div>
+            <div>
+                <strong id="processingDocumentCount">0</strong>
+                <span>处理中</span>
+            </div>
+            <div>
+                <strong id="trackedDocumentCount">0</strong>
+                <span>已关联</span>
+            </div>
+        </div>
+
+        <div id="knowledgeError" class="knowledge-error" role="alert" hidden></div>
+
+        <label class="document-search">
+            <span class="visually-hidden">搜索知识库文档</span>
+            <input id="documentSearchInput" type="search" placeholder="搜索标题或 docId" autocomplete="off">
+        </label>
+
+        <div id="documentList" class="document-list" aria-live="polite"></div>
+
+        <footer class="knowledge-panel-footer">
+            文档列表暂存于当前浏览器；版本与发布状态实时读取服务端。
+        </footer>
+    </aside>
 </div>
+
+<dialog id="documentDialog" class="document-dialog" aria-labelledby="documentDialogTitle">
+    <form id="documentUploadForm" method="dialog" novalidate>
+        <header class="document-dialog-header">
+            <div>
+                <p id="documentDialogEyebrow">NEW DOCUMENT</p>
+                <h2 id="documentDialogTitle">上传新文档</h2>
+                <p id="documentDialogDescription">创建逻辑文档并生成第一个物理版本。</p>
+            </div>
+            <button id="closeDocumentDialogButton" class="dialog-close-button" type="button"
+                    aria-label="关闭上传窗口">关闭</button>
+        </header>
+
+        <div id="versionTarget" class="version-target" hidden>
+            <span>目标文档</span>
+            <strong id="versionTargetTitle"></strong>
+            <code id="versionTargetId"></code>
+        </div>
+
+        <label id="documentTitleField" class="document-form-field">
+            <span>文档标题 <small>可选</small></span>
+            <input id="documentTitleInput" name="docTitle" type="text" maxlength="255"
+                   placeholder="不填写时使用文件名" autocomplete="off">
+        </label>
+
+        <div class="document-form-row">
+            <label class="document-form-field">
+                <span>上传者</span>
+                <input id="documentUploaderInput" name="uploader" type="text" maxlength="64"
+                       required autocomplete="off">
+            </label>
+            <label id="documentVisibilityField" class="document-form-field">
+                <span>可见范围 <small>预留</small></span>
+                <select id="documentVisibilityInput" name="visibility">
+                    <option value="private">私有</option>
+                    <option value="internal">内部</option>
+                    <option value="public">公开</option>
+                </select>
+            </label>
+        </div>
+
+        <label id="changeSummaryField" class="document-form-field" hidden>
+            <span>版本说明 <small>可选</small></span>
+            <textarea id="changeSummaryInput" name="changeSummary" rows="3" maxlength="500"
+                      placeholder="例如：更新产品参数与常见问题"></textarea>
+        </label>
+
+        <label id="documentDropzone" class="document-dropzone" for="documentFileInput">
+            <input id="documentFileInput" name="file" type="file" accept=".pdf,.doc,.docx" required>
+            <strong id="documentFileLabel">选择 PDF、DOC 或 DOCX 文件</strong>
+            <span id="documentFileHint">点击选择，或将文件拖放到此处</span>
+        </label>
+
+        <p class="visibility-note">可见范围目前只写入预留字段，本期不执行权限控制。</p>
+        <div id="documentFormError" class="document-form-error" role="alert" hidden></div>
+
+        <footer class="document-dialog-actions">
+            <button id="cancelDocumentDialogButton" class="dialog-secondary-button" type="button">取消</button>
+            <button id="submitDocumentButton" class="dialog-primary-button" type="submit">开始上传</button>
+        </footer>
+    </form>
+</dialog>
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/chat.js" defer></script>
+<script src="js/chat.js?v=20260807-2" defer></script>
 </body>
 </html>

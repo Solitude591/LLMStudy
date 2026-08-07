@@ -48,6 +48,7 @@ public class RagPipeline {
         HybridRetriever.RetrievalResult retrieval = hybridRetriever.retrieve(rewritten);
         // 聚合器先融合双路排名，再按配置可选重排并统一截断 Top N。
         List<RetrievalCandidate> candidates = aggregator.aggregate(rewritten, retrieval);
+        // 内容注入器负责 Prompt 模板注入和结构化引用生成
         RagPromptInjector.Injection injection = promptInjector.inject(
                 request, rewritten, candidates);
         return new RagResult(injection.prompt(), rewritten, injection.references());

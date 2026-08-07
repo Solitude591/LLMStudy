@@ -7,6 +7,7 @@ import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.filter.MetadataFilterBuilder;
 import dev.langchain4j.store.embedding.elasticsearch.ElasticsearchEmbeddingStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,13 +51,33 @@ public class KnnRetriever {
      * @return 按向量相似度排列的项目自有候选
      */
     public List<RetrievalCandidate> retrieve(String rewrittenQuestion) {
+        return search(rewrittenQuestion, null);
+    }
+
+    /** 仅在当前已发布版本集合内执行向量检索。 */
+    public List<RetrievalCandidate> retrieve(String rewrittenQuestion,
+                                             List<String> currentVersionIds) {
+        if (currentVersionIds == null || currentVersionIds.isEmpty()) {
+            return List.of();
+        }
+        return search(rewrittenQuestion, currentVersionIds);
+    }
+
+    private List<RetrievalCandidate> search(String rewrittenQuestion,
+                                            List<String> currentVersionIds) {
         float[] vector = embeddingModel.embed(rewrittenQuestion);
-        List<EmbeddingMatch<TextSegment>> matches = embeddingStore.search(
+        EmbeddingSearchRequest.EmbeddingSearchRequestBuilder request =
                 EmbeddingSearchRequest.builder()
                         .queryEmbedding(Embedding.from(vector))
                         .maxResults(RESULTS_PER_CHANNEL)
-                        .minScore(0.0)
-                        .build()).matches();
+                        .minScore(0.0);
+        if (currentVersionIds != null) {
+            request.filter(MetadataFilterBuilder
+                    .metadataKey(SegmentMetadataKeys.VERSION_ID)
+                    .isIn(currentVersionIds));
+        }
+        List<EmbeddingMatch<TextSegment>> matches =
+                embeddingStore.search(request.build()).matches();
         List<RetrievalCandidate> candidates = new ArrayList<>();
         // 请求级缓存避免多个子分片指向同一父分片时重复访问 Redis/MySQL。
         Map<String, KnowledgeSegment> requestCache = new HashMap<>();

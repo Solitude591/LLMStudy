@@ -25,11 +25,11 @@ class KnowledgeIngestionCoordinatorTest {
         DocumentChunkingService chunking = mock(DocumentChunkingService.class);
         SegmentEmbeddingService embedding = mock(SegmentEmbeddingService.class);
         ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
-        when(documents.processDocument("doc-1"))
+        when(documents.processDocument("v-1"))
                 .thenReturn(DocumentProcessingOutcome.EXCEL_IMPORTED);
 
         new KnowledgeIngestionCoordinator(documents, chunking, embedding, publisher)
-                .onDocumentUploaded(new DocumentUploadedEvent(this, "doc-1"));
+                .onDocumentUploaded(new DocumentUploadedEvent(this, "v-1"));
 
         verify(publisher, never()).publishEvent(isA(DocumentParsedEvent.class));
     }
@@ -40,11 +40,11 @@ class KnowledgeIngestionCoordinatorTest {
         DocumentChunkingService chunking = mock(DocumentChunkingService.class);
         SegmentEmbeddingService embedding = mock(SegmentEmbeddingService.class);
         ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
-        when(chunking.splitDocument("doc-1"))
-                .thenReturn(new DocumentSplitResult("doc-1", 3, "chunked", false));
+        when(chunking.splitDocument("v-1"))
+                .thenReturn(new DocumentSplitResult("v-1", 3, "chunked", false));
 
         new KnowledgeIngestionCoordinator(documents, chunking, embedding, publisher)
-                .onDocumentParsed(new DocumentParsedEvent(this, "doc-1"));
+                .onDocumentParsed(new DocumentParsedEvent(this, "v-1"));
 
         verify(publisher).publishEvent(any());
     }

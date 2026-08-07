@@ -9,6 +9,7 @@ public final class SegmentMetadataKeys {
     public static final String HEADER_PATH = "header_path";
     public static final String SKIP_EMBEDDING = "skip_embedding";
     public static final String DOC_ID = "doc_id";
+    public static final String VERSION_ID = "version_id";
     public static final String SOURCE_URL = "source_url";
 
     private SegmentMetadataKeys() {

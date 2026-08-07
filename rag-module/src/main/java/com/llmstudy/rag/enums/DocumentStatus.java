@@ -3,7 +3,7 @@ package com.llmstudy.rag.enums;
 import java.util.Arrays;
 
 /**
- * knowledge_document.doc_status 对应的文档生命周期状态。
+ * knowledge_document_version.processing_status 对应的文档处理生命周期状态。
  *
  * <p>枚举 value 与数据库统一使用大写字符串。</p>
  */

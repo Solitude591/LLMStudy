@@ -4,14 +4,17 @@ import com.llmstudy.rag.client.VisionClient;
 import com.llmstudy.rag.config.MinioProperties;
 import com.llmstudy.rag.dto.DocumentParseResult;
 import com.llmstudy.rag.dto.DocumentVO;
+import com.llmstudy.rag.dto.DocumentVersionVO;
 import com.llmstudy.rag.dto.MineruContentElement;
 import com.llmstudy.rag.entity.KnowledgeDocument;
+import com.llmstudy.rag.entity.KnowledgeDocumentVersion;
+import com.llmstudy.rag.enums.DocumentReleaseStatus;
 import com.llmstudy.rag.enums.DocumentStatus;
 import com.llmstudy.rag.module.knowledge.ingestion.event.DocumentUploadedEvent;
 import com.llmstudy.rag.mapper.KnowledgeDocumentMapper;
+import com.llmstudy.rag.mapper.KnowledgeDocumentVersionMapper;
 import com.llmstudy.rag.module.knowledge.ingestion.DocumentStageAlreadyRunningException;
 import com.llmstudy.rag.module.knowledge.model.DocumentProcessingOutcome;
-import com.llmstudy.rag.module.knowledge.excel.ExcelImportService;
 import com.llmstudy.rag.module.knowledge.ingestion.image.MarkdownImageProcessor;
 import com.llmstudy.rag.module.knowledge.ingestion.parser.DocumentParseContext;
 import com.llmstudy.rag.module.knowledge.ingestion.parser.DocumentParserRouter;
@@ -22,7 +25,6 @@ import io.minio.RemoveObjectArgs;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.json.JsonMapper;
@@ -40,7 +42,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 知识文档默认实现，协调 MinIO、文档解析器、图片处理与 Excel 支线。
+ * 知识文档默认实现，以物理版本为主键协调 MinIO、文档解析器与图片处理流水线。
  *
  * <p>状态迁移均使用 Mapper CAS，外部调用失败时仅回退自己抢占的阶段，
  * 避免覆盖并发任务已推进的状态。</p>
@@ -74,14 +76,14 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
     /** 提供 MinIO 桶名和访问端点，用于选择存储位置并拼接文档访问 URL。 */
     private final MinioProperties minioProperties;
 
-    /** 负责文档元数据查询、写入以及解析状态的原子更新。 */
+    /** 负责逻辑文档元数据查询与版本指针的原子更新。 */
     private final KnowledgeDocumentMapper documentMapper;
+
+    /** 负责物理版本快照、处理进度与发布状态的原子更新。 */
+    private final KnowledgeDocumentVersionMapper versionMapper;
 
     /** 根据文件扩展名把统一解析请求分发给 PDF、Word 等解析器。 */
     private final DocumentParserRouter parserRouter;
-
-    /** Excel 文档的独立结构化入库服务，不进入 RAG 分片链路。 */
-    private final ExcelImportService excelImportService;
 
     /** 对 MinerU 提取出的图片生成语义描述，供 Markdown 和后续分片使用。 */
     private final VisionClient visionClient;
@@ -98,26 +100,31 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
     /** 生成文档唯一 ID（雪花算法），替代随机 UUID 以获得对 MySQL 索引友好的有序 ID。 */
     private final SnowflakeIdGenerator idGenerator;
 
+    /** 在数据库事务内创建逻辑文档与物理版本记录，隔离 MinIO 等网络操作。 */
+    private final DocumentVersionPersistenceService versionPersistenceService;
+
     public DefaultKnowledgeDocumentService(MinioClient minioClient,
                                MinioProperties minioProperties,
                                KnowledgeDocumentMapper documentMapper,
+                               KnowledgeDocumentVersionMapper versionMapper,
                                DocumentParserRouter parserRouter,
-                               ExcelImportService excelImportService,
                                VisionClient visionClient,
                                MarkdownImageProcessor imageProcessor,
                                JsonMapper objectMapper,
                                ApplicationEventPublisher eventPublisher,
-                               SnowflakeIdGenerator idGenerator) {
+                               SnowflakeIdGenerator idGenerator,
+                               DocumentVersionPersistenceService versionPersistenceService) {
         this.minioClient = minioClient;
         this.minioProperties = minioProperties;
         this.documentMapper = documentMapper;
+        this.versionMapper = versionMapper;
         this.parserRouter = parserRouter;
-        this.excelImportService = excelImportService;
         this.visionClient = visionClient;
         this.imageProcessor = imageProcessor;
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
         this.idGenerator = idGenerator;
+        this.versionPersistenceService = versionPersistenceService;
     }
 
     /** {@inheritDoc} */
@@ -146,43 +153,42 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
             throw new IllegalArgumentException(
                     "不支持的文件类型: ." + fileType + "，仅支持: " + ALLOWED_FILE_TYPES);
         }
-        String targetTableName = EXCEL_FILE_TYPES.contains(fileType)
-                ? ExcelImportService.requireValidTableName(tableName)
-                : "";
+        // Excel 依赖旧 knowledge_document 的文件级字段，新版本模型暂无法承载，
+        // 本期先把它从版本流水线中隔离，待 Excel 迁移后再放行。
+        if (EXCEL_FILE_TYPES.contains(fileType)) {
+            throw new IllegalArgumentException(
+                    "Excel 导入暂未迁移到版本模型，本期仅支持 PDF/Word 等 RAG 文档");
+        }
+        // 上传入口与解析器注册表必须保持一致，避免文件已经落库后才发现没有处理策略，
+        // 导致版本永久停留在 UPLOADED。
+        if (!parserRouter.supports(fileType)) {
+            throw new IllegalArgumentException("暂不支持解析该文件类型: ." + fileType);
+        }
         // 限制上传体积，防止单次请求过度占用应用内存、网络带宽和对象存储空间。
         if (fileSize > MAX_FILE_SIZE) {
             throw new IllegalArgumentException(
                     "文件过大: " + (fileSize / 1024 / 1024) + "MB，最大允许 50MB");
         }
 
-        // 按“上传者 + 文件内容 MD5”去重，避免把其他用户的私有文档直接返回。
-        String fileMd5 = calculateFileMd5(file);
-        KnowledgeDocument existing =
-                documentMapper.findByUploaderAndFileMd5AndTargetTableName(
-                        uploader, fileMd5, targetTableName);
-        if (existing != null) {
-            log.info("检测到重复文件，跳过 MinIO 上传: uploader={}, fileMd5={}, docId={}",
-                    uploader, fileMd5, existing.getDocId());
-            // 已存在的文档无需重新上传，但需要触发异步处理以确保流水线完整执行。
-            fireUploadedEvent(existing.getDocId());
-            return toVO(existing, true);
-        }
+        // 计算文件内容 SHA-256，作为物理版本的内容哈希（uk_document_version_hash 唯一索引依赖它）。
+        String contentHash = calculateFileSha256(file);
 
         // 标题与可见范围在 Service 再做一次兜底，避免非 HTTP 调用绕过 Controller 默认值。
         if (docTitle == null || docTitle.isBlank()) {
             docTitle = stripExtension(originalName);
         }
-        // todo 权限后面再做
+        // todo 权限后面再做；accessible_by 本期只保存、不参与鉴权。
         if (visibility == null || visibility.isBlank()) {
             visibility = "private";
         }
 
-        // 2. 生成 doc_id（雪花算法，本地生成、趋势递增，对 MySQL 聚簇索引友好）
+        // 2. 生成 doc_id 与 version_id（雪花算法，本地生成、趋势递增，对 MySQL 聚簇索引友好）
         String docId = String.valueOf(idGenerator.nextId());
+        String versionId = String.valueOf(idGenerator.nextId());
 
-        // 3. 上传原始文件到 MinIO（{docId}/raw/{originalName}）
-        // 对象键按文档隔离，后续解析产物也会落在同一个 docId 前缀下，便于统一清理。
-        String objectKey = buildRawObjectKey(docId, originalName);
+        // 3. 上传原始文件到 MinIO（documents/{docId}/versions/{versionId}/raw/{originalName}）
+        // 对象键按「文档 + 版本」双层隔离，后续解析产物落在同一版本前缀下，避免覆盖其他版本。
+        String objectKey = buildRawObjectKey(docId, versionId, originalName);
         try {
             // 直接使用上传流写入 MinIO，避免先把整个文件读取到 JVM 堆内存。
             minioClient.putObject(PutObjectArgs.builder()
@@ -200,48 +206,138 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
         // 持久化可访问 URL，MinerU 解析器会让服务端主动拉取原始文件。
         String docUrl = buildDocUrl(objectKey);
 
-        // 4. 写 MySQL：knowledge_document 表
-        // 只有 MinIO 上传成功后才创建元数据，保证数据库中的 docUrl 至少对应一个已写入对象。
-        KnowledgeDocument doc = new KnowledgeDocument();
-        doc.setDocId(docId);
-        doc.setDocTitle(docTitle);
-        doc.setOriginalName(originalName);
-        doc.setFileType(fileType);
-        doc.setFileSize(fileSize);
-        doc.setFileMd5(fileMd5);
-        doc.setTargetTableName(targetTableName);
-        doc.setUploader(uploader);
-        doc.setDocUrl(docUrl);
-        doc.setRawObjectKey(objectKey);
-        // 文档状态统一通过枚举设置，数据库保存大写值。
-        doc.setDocumentStatus(DocumentStatus.UPLOADED);
-        doc.setVisibility(visibility);
+        // 4. 数据库事务内创建逻辑文档与版本 1。
+        // 只有 MinIO 上传成功后才落库，保证库中的 docUrl 至少对应一个已写入对象。
+        // 事务只覆盖本地数据库操作，不包含任何网络调用，避免长事务占用连接。
         try {
-            documentMapper.insert(doc);
-        } catch (DuplicateKeyException e) {
-            // 并发上传相同内容时，唯一索引只允许一个请求成功；清理另一个请求的孤儿对象。
-            removeObjectQuietly(objectKey);
-            KnowledgeDocument concurrentExisting =
-                    documentMapper.findByUploaderAndFileMd5AndTargetTableName(
-                            uploader, fileMd5, targetTableName);
-            if (concurrentExisting != null) {
-                log.info("并发重复上传已拦截: uploader={}, fileMd5={}, docId={}",
-                        uploader, fileMd5, concurrentExisting.getDocId());
-                // 并发胜出的文档已经落库，触发其异步处理流水线。
-                fireUploadedEvent(concurrentExisting.getDocId());
-                return toVO(concurrentExisting, true);
-            }
-            throw e;
+            versionPersistenceService.createInitialVersion(
+                    docId,
+                    versionId,
+                    docTitle,
+                    visibility,
+                    contentHash,
+                    fileType,
+                    uploader,
+                    docUrl,
+                    objectKey);
         } catch (RuntimeException e) {
+            // 落库失败时清理刚上传的 MinIO 对象，避免留下孤儿文件。
             removeObjectQuietly(objectKey);
             throw e;
         }
 
         // 5. 上传完成后发布事件，由异步监听器接管后续解析、分片、向量化流程。
-        // 接口立即返回，不阻塞。前端通过轮询 GET /document/{docId} 的 docStatus 感知进度。
-        log.info("文档记录创建成功: docId={}, title={}", docId, docTitle);
-        fireUploadedEvent(docId);
-        return toVO(doc, false);
+        // 接口立即返回，不阻塞。事件携带版本 ID，整条流水线以版本为主键驱动。
+        log.info("文档记录创建成功: docId={}, versionId={}, title={}", docId, versionId, docTitle);
+        eventPublisher.publishEvent(new DocumentUploadedEvent(this, versionId));
+
+        return buildUploadedVO(docId, versionId, 1, docTitle, originalName, fileType,
+                fileSize, contentHash, uploader, docUrl, visibility);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public DocumentVO uploadNewVersion(String docId,
+                                       MultipartFile file,
+                                       String uploader,
+                                       String changeSummary) {
+        if (docId == null || docId.isBlank()) {
+            throw new IllegalArgumentException("docId 不能为空");
+        }
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("上传文件不能为空");
+        }
+        if (uploader == null || uploader.isBlank()) {
+            throw new IllegalArgumentException("上传者不能为空");
+        }
+        if (changeSummary != null && changeSummary.strip().length() > 512) {
+            throw new IllegalArgumentException("版本变更说明不能超过 512 个字符");
+        }
+
+        KnowledgeDocument document = documentMapper.findByDocId(docId);
+        if (document == null) {
+            throw new IllegalArgumentException("文档不存在: " + docId);
+        }
+
+        String originalName = file.getOriginalFilename();
+        String fileType = extractFileType(originalName);
+        long fileSize = file.getSize();
+        if (!ALLOWED_FILE_TYPES.contains(fileType)) {
+            throw new IllegalArgumentException(
+                    "不支持的文件类型: ." + fileType + "，仅支持: " + ALLOWED_FILE_TYPES);
+        }
+        if (EXCEL_FILE_TYPES.contains(fileType)) {
+            throw new IllegalArgumentException(
+                    "Excel 导入暂未迁移到版本模型，本期仅支持 PDF/Word 等 RAG 文档");
+        }
+        if (!parserRouter.supports(fileType)) {
+            throw new IllegalArgumentException("暂不支持解析该文件类型: ." + fileType);
+        }
+        if (fileSize > MAX_FILE_SIZE) {
+            throw new IllegalArgumentException(
+                    "文件过大: " + (fileSize / 1024 / 1024) + "MB，最大允许 50MB");
+        }
+
+        String contentHash = calculateFileSha256(file);
+        // 事务外预检查用于避免无意义上传；事务内还会在文档行锁下再次检查，保证并发安全。
+        KnowledgeDocumentVersion duplicate =
+                versionMapper.findByDocIdAndContentHash(docId, contentHash);
+        if (duplicate != null) {
+            throw new DocumentVersionConflictException(
+                    "相同内容的版本已经存在: versionId=" + duplicate.getVersionId());
+        }
+
+        String versionId = String.valueOf(idGenerator.nextId());
+        String objectKey = buildRawObjectKey(docId, versionId, originalName);
+        try {
+            minioClient.putObject(PutObjectArgs.builder()
+                    .bucket(minioProperties.getBucketName())
+                    .object(objectKey)
+                    .stream(file.getInputStream(), fileSize, -1)
+                    .contentType(file.getContentType())
+                    .build());
+            log.info("新版本原始文件上传成功: docId={}, versionId={}, object={}",
+                    docId, versionId, objectKey);
+        } catch (Exception e) {
+            log.error("新版本原始文件上传失败: docId={}, versionId={}, object={}",
+                    docId, versionId, objectKey, e);
+            throw new RuntimeException("文件存储失败，请稍后重试", e);
+        }
+
+        String docUrl = buildDocUrl(objectKey);
+        KnowledgeDocumentVersion version;
+        try {
+            version = versionPersistenceService.createNextVersion(
+                    docId,
+                    versionId,
+                    contentHash,
+                    fileType,
+                    uploader,
+                    docUrl,
+                    objectKey,
+                    changeSummary);
+        } catch (RuntimeException e) {
+            removeObjectQuietly(objectKey);
+            throw e;
+        }
+
+        // 只启动新版本自己的离线处理流程，不更新 current_version_id。
+        eventPublisher.publishEvent(new DocumentUploadedEvent(this, versionId));
+        log.info("文档新版本创建成功: docId={}, versionId={}, versionNo={}, currentVersionId={}",
+                docId, versionId, version.getVersionNo(), document.getCurrentVersionId());
+
+        return buildUploadedVO(
+                docId,
+                versionId,
+                version.getVersionNo(),
+                document.getDocTitle(),
+                originalName,
+                fileType,
+                fileSize,
+                contentHash,
+                uploader,
+                docUrl,
+                document.getAccessibleBy());
     }
 
     /** {@inheritDoc} */
@@ -255,90 +351,99 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
         if (doc == null) {
             return null;
         }
-        return toVO(doc);
+        // 已发布后默认返回当前生效快照；首次发布前才回退到最新的准备中版本。
+        KnowledgeDocumentVersion visibleVersion = doc.getCurrentVersionId() == null
+                ? versionMapper.findLatestByDocId(docId)
+                : versionMapper.findByDocIdAndVersionId(docId, doc.getCurrentVersionId());
+        return toVO(doc, visibleVersion);
     }
 
     /** {@inheritDoc} */
     @Override
-    public DocumentProcessingOutcome processDocument(String docId) {
-        // 从数据库恢复文档记录：此时可能在上传后几秒才被异步线程调度到，
-        // 文档状态可能已被并发操作改变，parseUploadedDocument 内部会做 CAS 校验。
-        KnowledgeDocument doc = documentMapper.findByDocId(docId);
-        if (doc == null) {
-            throw new IllegalArgumentException("文档不存在: " + docId);
+    public List<DocumentVersionVO> listVersions(String docId) {
+        if (docId == null || docId.isBlank()) {
+            throw new IllegalArgumentException("docId 不能为空");
         }
-        // 重复上传或迟到的 DocumentUploadedEvent 不应让已经推进的文档重新解析，
+        KnowledgeDocument document = documentMapper.findByDocId(docId);
+        if (document == null) {
+            return null;
+        }
+        return versionMapper.findByDocId(docId).stream()
+                .map(version -> toVersionVO(document, version))
+                .toList();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public DocumentVersionVO getVersion(String docId, String versionId) {
+        if (docId == null || docId.isBlank()) {
+            throw new IllegalArgumentException("docId 不能为空");
+        }
+        if (versionId == null || versionId.isBlank()) {
+            throw new IllegalArgumentException("versionId 不能为空");
+        }
+        KnowledgeDocument document = documentMapper.findByDocId(docId);
+        if (document == null) {
+            return null;
+        }
+        KnowledgeDocumentVersion version =
+                versionMapper.findByDocIdAndVersionId(docId, versionId);
+        return version == null ? null : toVersionVO(document, version);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public DocumentProcessingOutcome processDocument(String versionId) {
+        if (versionId == null || versionId.isBlank()) {
+            throw new IllegalArgumentException("versionId 不能为空");
+        }
+        // 从数据库恢复版本记录：此时可能在上传后几秒才被异步线程调度到，
+        // 版本状态可能已被并发操作改变，parseUploadedDocument 内部会做 CAS 校验。
+        KnowledgeDocumentVersion version = versionMapper.findByVersionId(versionId);
+        if (version == null) {
+            throw new IllegalArgumentException("版本不存在: " + versionId);
+        }
+        // 重复上传或迟到的 DocumentUploadedEvent 不应让已经推进的版本重新解析，
         // 更不能在监听器的失败分支中把状态回退到 uploaded。
-        if (doc.getDocumentStatus() != DocumentStatus.UPLOADED) {
-            log.info("忽略重复上传事件，文档已经离开 uploaded 状态: docId={}, status={}",
-                    docId, doc.getDocStatus());
+        if (version.getDocumentStatus() != DocumentStatus.UPLOADED) {
+            log.info("忽略重复上传事件，版本已经离开 uploaded 状态: versionId={}, status={}",
+                    versionId, version.getProcessingStatus());
             return DocumentProcessingOutcome.SKIPPED;
         }
-
-        if (EXCEL_FILE_TYPES.contains(doc.getFileType())) {
-            excelImportService.importDocument(doc);
-            return DocumentProcessingOutcome.EXCEL_IMPORTED;
+        // 未注册解析策略的格式保持 uploaded 状态，等待后续扩展新策略即可自动纳入。
+        if (!parserRouter.supports(version.getFileType())) {
+            log.info("文件类型未注册解析策略，版本保持 uploaded 状态: versionId={}, type={}",
+                    versionId, version.getFileType());
+            return DocumentProcessingOutcome.SKIPPED;
         }
-        parseUploadedDocument(doc);
+        parseUploadedDocument(version);
         return DocumentProcessingOutcome.RAG_PARSED;
     }
 
     /**
-     * 发布上传完成事件，触发异步解析流水线。
-     *
-     * <p>对于未被任何解析策略支持的格式，不发布事件——
-     * 没有可解析的内容，后续分片和向量化也没有输入，空转流水线无意义。</p>
+     * 执行版本解析。MinerU 根据版本记录中的公网 docUrl 拉取原始文件。
      */
-    private void fireUploadedEvent(String docId) {
-        // 从 MySQL 重新加载完整记录，确保拿到 doc.fileType 和最新状态。
-        KnowledgeDocument doc = documentMapper.findByDocId(docId);
-        if (doc == null) {
-            return;
-        }
-        // 只对已注册解析策略的格式触发流水线。PDF/Word 统一交给 MinerU。
-        // 未注册格式保持 uploaded 状态，等待后续扩展新策略即可自动纳入。
-        if (!EXCEL_FILE_TYPES.contains(doc.getFileType())
-                && !parserRouter.supports(doc.getFileType())) {
-            log.info("文件类型未注册解析策略，跳过解析流水线: docId={}, type={}",
-                    docId, doc.getFileType());
-            return;
-        }
-        if (doc.getDocumentStatus() != DocumentStatus.UPLOADED) {
-            log.info("重复文件已进入处理流程，不再发布上传事件: docId={}, status={}",
-                    docId, doc.getDocStatus());
-            return;
-        }
-        // Spring 事件默认同步执行，但 Listener 标注了 @Async，
-        // 因此 KnowledgeIngestionCoordinator.onDocumentUploaded 会在线程池中运行。
-        eventPublisher.publishEvent(new DocumentUploadedEvent(this, docId));
-    }
+    private void parseUploadedDocument(KnowledgeDocumentVersion version) {
+        String versionId = version.getVersionId();
+        String docId = version.getDocId();
 
-    /**
-     * 执行文档解析。MinerU 根据数据库中的公网 docUrl 拉取原始文件。
-     */
-    private String parseUploadedDocument(KnowledgeDocument doc) {
-        String docId = doc.getDocId();
-
-        // 上传流程已经持有完整文档记录，无需再根据 docId 查询一次数据库。
-        if (doc.getDocumentStatus() != DocumentStatus.UPLOADED) {
-            throw new IllegalStateException("文档状态不正确，当前状态: " + doc.getDocStatus());
+        if (version.getDocumentStatus() != DocumentStatus.UPLOADED) {
+            throw new IllegalStateException("版本状态不正确，当前状态: " + version.getProcessingStatus());
         }
 
-        // 原子抢占解析权，防止同内容并发上传触发两次 MinerU 或重复写入产物。
-        if (documentMapper.compareAndSetStatus(
-                docId,
-                DocumentStatus.CONVERTING,
-                DocumentStatus.UPLOADED) != 1) {
+        // 原子抢占解析权，防止并发事件触发两次 MinerU 或重复写入产物。
+        if (versionMapper.compareAndSetProcessingStatus(
+                versionId, DocumentStatus.CONVERTING, DocumentStatus.UPLOADED) != 1) {
             throw new DocumentStageAlreadyRunningException(
-                    "文档解析阶段已经被其他线程抢占: " + docId);
+                    "版本解析阶段已经被其他线程抢占: " + versionId);
         }
-        log.info("开始解析文档: docId={}", docId);
+        log.info("开始解析版本: versionId={}, docId={}", versionId, docId);
 
         // 本次已写入 MinIO 的对象，失败时统一回收，避免留下孤儿文件
         List<String> uploadedKeys = new ArrayList<>();
 
         try {
-            DocumentParseContext parseContext = new DocumentParseContext(doc);
+            DocumentParseContext parseContext = new DocumentParseContext(version);
 
             // 路由器依据扩展名选择策略，所有策略统一返回 DocumentParseResult。
             DocumentParseResult parseResult = parserRouter.parse(parseContext);
@@ -346,13 +451,13 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
             if (markdown == null || markdown.isBlank()) {
                 throw new IllegalStateException("文档解析结果为空");
             }
-            log.info("文档解析产物获取完成: docId={}, type={}, markdown={}字符, 图片={}张, contentList={}项",
-                    docId, doc.getFileType(), markdown.length(), parseResult.getImages().size(),
+            log.info("文档解析产物获取完成: versionId={}, type={}, markdown={}字符, 图片={}张, contentList={}项",
+                    versionId, version.getFileType(), markdown.length(), parseResult.getImages().size(),
                     parseResult.getContentList().size());
 
             // 3. 上传 Markdown 中实际引用到的图片
             // 映射的 key 保持 Markdown 中的原始相对路径，value 是图片上传后的可访问 URL。
-            Map<String, String> urlMapping = uploadReferencedImages(docId, parseResult, uploadedKeys);
+            Map<String, String> urlMapping = uploadReferencedImages(docId, versionId, parseResult, uploadedKeys);
 
             // 4. 生成图片描述：视觉模型优先，失败回落到 PDF 原文图注
             // 只描述正文实际引用的图片，跳过 MinerU ZIP 中未被使用的中间图片。
@@ -363,15 +468,15 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
             String rewrittenMarkdown = imageProcessor.rewriteImages(markdown, urlMapping, descriptions);
             imageProcessor.rewriteContentList(parseResult.getContentList(), urlMapping, descriptions);
 
-            // 6. 上传 Markdown
-            String mdObjectKey = buildConvertedObjectKey(docId);
+            // 6. 上传 Markdown（按版本隔离）
+            String mdObjectKey = buildConvertedObjectKey(docId, versionId);
             putObject(mdObjectKey, rewrittenMarkdown.getBytes(StandardCharsets.UTF_8),
                     "text/markdown; charset=utf-8");
             uploadedKeys.add(mdObjectKey);
 
             // 7. 上传 content_list.json，供后续「基于标题的父子分段」直接消费
             if (parseResult.hasContentList()) {
-                String contentListKey = buildContentListObjectKey(docId);
+                String contentListKey = buildContentListObjectKey(docId, versionId);
                 // content_list 保留标题、页码和图片描述，后续分片无需重新解析 Markdown 猜测结构。
                 byte[] contentListBytes = objectMapper
                         .writeValueAsString(parseResult.getContentList())
@@ -380,28 +485,27 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
                 uploadedKeys.add(contentListKey);
             }
 
-            // 8. 全部成功后才写回文档记录
+            // 8. 全部成功后才写回版本记录
             // 先完成全部对象上传，再将状态切到 converted，避免其他流程读到不完整的解析产物。
             String convertedDocUrl = buildDocUrl(mdObjectKey);
-            int updated = documentMapper.updateConverted(
-                    docId,
+            int updated = versionMapper.updateConverted(
+                    versionId,
                     convertedDocUrl,
                     DocumentStatus.CONVERTED,
                     DocumentStatus.CONVERTING);
             if (updated != 1) {
-                throw new IllegalStateException("更新文档解析结果失败: docId=" + docId);
+                throw new IllegalStateException("更新版本解析结果失败: versionId=" + versionId);
             }
 
-            log.info("文档解析流程完成: docId={}, 图片={}张, 描述={}条, convertedUrl={}",
-                    docId, urlMapping.size(), descriptions.size(), convertedDocUrl);
-            return convertedDocUrl;
+            log.info("文档解析流程完成: versionId={}, 图片={}张, 描述={}条, convertedUrl={}",
+                    versionId, urlMapping.size(), descriptions.size(), convertedDocUrl);
         } catch (Exception e) {
-            log.error("文档解析失败，回滚状态并清理产物: docId={}", docId, e);
-            // 只删除本次解析新写入的对象，原始文件仍保留；再次上传同内容文件即可重试。
+            log.error("文档解析失败，回滚状态并清理产物: versionId={}", versionId, e);
+            // 只删除本次解析新写入的对象，原始文件仍保留；重新触发即可重试。
             uploadedKeys.forEach(this::removeObjectQuietly);
             // 仅允许 converting 回退到 uploaded，防止迟到的失败结果覆盖更新状态。
-            documentMapper.compareAndSetStatusWithError(
-                    docId,
+            versionMapper.compareAndSetProcessingStatusWithError(
+                    versionId,
                     DocumentStatus.UPLOADED,
                     DocumentStatus.CONVERTING,
                     truncateError("解析失败: " + e.getMessage()));
@@ -425,6 +529,7 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
      * @return 图片相对路径 → MinIO 公网 URL
      */
     private Map<String, String> uploadReferencedImages(String docId,
+                                                       String versionId,
                                                        DocumentParseResult parseResult,
                                                        List<String> uploadedKeys) {
         // 从语法树而非正则表达式提取图片，避免误识别代码块或普通文本中的类似字符串。
@@ -449,7 +554,7 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
             }
 
             // 图片对象名使用路径哈希，既避免特殊字符问题，也防止清洗后同名图片互相覆盖。
-            String objectKey = buildImageObjectKey(docId, path);
+            String objectKey = buildImageObjectKey(docId, versionId, path);
             putObject(objectKey, image.getData(), image.getContentType());
             uploadedKeys.add(objectKey);
             // 用原始引用路径作 key，替换阶段才能与 Markdown 中的字面量对齐
@@ -556,35 +661,93 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
     // ========== 私有辅助方法 ==========
 
     /**
-     * Entity → VO 转换
+     * 构造首次上传的响应 VO。
+     *
+     * <p>新模型下文件级字段保存在版本表，逻辑文档表不再冗余存储；
+     * 这里用上传时的本地数据直接构建，避免再查一次数据库。</p>
      */
-    private DocumentVO toVO(KnowledgeDocument doc) {
-        return toVO(doc, false);
-    }
-
-    private DocumentVO toVO(KnowledgeDocument doc, boolean duplicate) {
+    private DocumentVO buildUploadedVO(String docId,
+                                       String versionId,
+                                       int versionNo,
+                                       String docTitle,
+                                       String originalName,
+                                       String fileType,
+                                       long fileSize,
+                                       String contentHash,
+                                       String uploader,
+                                       String docUrl,
+                                       String visibility) {
         return DocumentVO.builder()
-                .docId(doc.getDocId())
-                .docTitle(doc.getDocTitle())
-                .originalName(doc.getOriginalName())
-                .fileType(doc.getFileType())
-                .fileSize(doc.getFileSize())
-                .fileMd5(doc.getFileMd5())
-                .targetTableName(doc.getTargetTableName())
-                .uploader(doc.getUploader())
-                .docUrl(doc.getDocUrl())
-                .docStatus(doc.getDocStatus())
-                .convertedDocUrl(doc.getConvertedDocUrl())
-                .visibility(doc.getVisibility())
-                .createdAt(doc.getCreatedAt())
-                .duplicate(duplicate)
+                .docId(docId)
+                .versionId(versionId)
+                .versionNo(versionNo)
+                .contentHash(contentHash)
+                .docTitle(docTitle)
+                .originalName(originalName)
+                .fileType(fileType)
+                .fileSize(fileSize)
+                .uploader(uploader)
+                .docUrl(docUrl)
+                .docStatus(DocumentStatus.UPLOADED.value())
+                .processingStatus(DocumentStatus.UPLOADED.value())
+                .releaseStatus(DocumentReleaseStatus.PREPARING.value())
+                .visibility(visibility)
+                .duplicate(false)
                 .build();
     }
 
-    private String calculateFileMd5(MultipartFile file) {
+    /**
+     * Entity → VO 转换：逻辑文档 + 最新版本内容快照。
+     */
+    private DocumentVO toVO(KnowledgeDocument doc, KnowledgeDocumentVersion latest) {
+        DocumentVO.Builder builder = DocumentVO.builder()
+                .docId(doc.getDocId())
+                .docTitle(doc.getDocTitle())
+                .visibility(doc.getAccessibleBy())
+                .createdAt(doc.getCreatedAt())
+                .duplicate(false);
+        if (latest != null) {
+            builder.versionId(latest.getVersionId())
+                    .versionNo(latest.getVersionNo())
+                    .contentHash(latest.getContentHash())
+                    .fileType(latest.getFileType())
+                    .uploader(latest.getUploadedBy())
+                    .docUrl(latest.getDocUrl())
+                    .docStatus(latest.getProcessingStatus())
+                    .processingStatus(latest.getProcessingStatus())
+                    .releaseStatus(latest.getReleaseStatus())
+                    .convertedDocUrl(latest.getConvertedDocUrl());
+        }
+        return builder.build();
+    }
+
+    private DocumentVersionVO toVersionVO(KnowledgeDocument document,
+                                          KnowledgeDocumentVersion version) {
+        return new DocumentVersionVO(
+                version.getDocId(),
+                version.getVersionId(),
+                version.getVersionNo(),
+                version.getContentHash(),
+                version.getFileType(),
+                version.getUploadedBy(),
+                version.getDocUrl(),
+                version.getConvertedDocUrl(),
+                version.getProcessingStatus(),
+                version.getReleaseStatus(),
+                version.getErrorMessage(),
+                version.getRetryCount(),
+                version.getChangeSummary(),
+                version.getReadyAt(),
+                version.getPublishedAt(),
+                version.getCreatedAt(),
+                version.getUpdatedAt(),
+                version.getVersionId().equals(document.getCurrentVersionId()));
+    }
+
+    private String calculateFileSha256(MultipartFile file) {
         try (InputStream input = file.getInputStream()) {
-            MessageDigest digest = MessageDigest.getInstance("MD5");
-            // 分块读取避免一次性加载整个上传文件；此处 MD5 仅用于内容去重，不用于安全校验。
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            // 分块读取避免一次性加载整个上传文件；SHA-256 用作物理版本的内容哈希。
             byte[] buffer = new byte[8192];
             int length;
             while ((length = input.read(buffer)) != -1) {
@@ -592,7 +755,7 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
             }
             return HexFormat.of().formatHex(digest.digest());
         } catch (Exception e) {
-            throw new RuntimeException("计算文件 MD5 失败", e);
+            throw new RuntimeException("计算文件 SHA-256 失败", e);
         }
     }
 
@@ -610,42 +773,47 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
     }
 
     /**
-     * 构建原始文件 MinIO 存储路径：{docId}/raw/{safeFilename}
-     * 文件名仅保留 ASCII 安全字符，避免 MinIO 路径和 URL 编码问题。
+     * 构建原始文件 MinIO 存储路径：documents/{docId}/versions/{versionId}/raw/{safeFilename}
+     *
+     * <p>按「文档 + 版本」双层隔离，不同版本的同名原始文件互不覆盖。
+     * 文件名仅保留 ASCII 安全字符，避免 MinIO 路径和 URL 编码问题。</p>
      */
-    private String buildRawObjectKey(String docId, String originalName) {
+    private String buildRawObjectKey(String docId, String versionId, String originalName) {
         String safeName = originalName != null ? sanitizeFilename(originalName) : "unknown";
-        return docId + "/" + RAW_DIR + "/" + safeName;
+        return "documents/" + docId + "/versions/" + versionId + "/" + RAW_DIR + "/" + safeName;
     }
 
     /**
-     * 构建解析后 markdown 文件 MinIO 存储路径：{docId}/converted/{docId}.md
+     * 构建解析后 markdown 文件 MinIO 存储路径：
+     * documents/{docId}/versions/{versionId}/converted/document.md
      */
-    private String buildConvertedObjectKey(String docId) {
-        return docId + "/" + CONVERTED_DIR + "/" + docId + ".md";
+    private String buildConvertedObjectKey(String docId, String versionId) {
+        return "documents/" + docId + "/versions/" + versionId + "/" + CONVERTED_DIR + "/document.md";
     }
 
     /**
-     * 构建 content_list.json 存储路径：{docId}/converted/{docId}_content_list.json
+     * 构建 content_list.json 存储路径：
+     * documents/{docId}/versions/{versionId}/converted/content_list.json
      *
      * <p>该文件是分块阶段的输入，保留了标题层级、图片描述和页码等结构化信息。</p>
      */
-    private String buildContentListObjectKey(String docId) {
-        return docId + "/" + CONVERTED_DIR + "/" + docId + "_content_list.json";
+    private String buildContentListObjectKey(String docId, String versionId) {
+        return "documents/" + docId + "/versions/" + versionId + "/" + CONVERTED_DIR + "/content_list.json";
     }
 
     /**
-     * 构建图片存储路径：{docId}/converted/images/{路径SHA-256}.{ext}
+     * 构建图片存储路径：
+     * documents/{docId}/versions/{versionId}/images/{路径SHA-256}.{ext}
      *
      * <p>直接“清洗”原始路径会让 a b.png 与 ab.png 等不同文件落到同一对象名。
      * 使用归一化路径的 SHA-256 可稳定去重并避免碰撞，同时保留安全的扩展名。</p>
      */
-    private String buildImageObjectKey(String docId, String imagePath) {
+    private String buildImageObjectKey(String docId, String versionId, String imagePath) {
         String normalized = imageProcessor.normalizePath(imagePath);
         if (normalized == null) {
             throw new IllegalArgumentException("图片路径不能为空");
         }
-        return docId + "/" + CONVERTED_DIR + "/" + IMAGES_DIR + "/"
+        return "documents/" + docId + "/versions/" + versionId + "/" + IMAGES_DIR + "/"
                 + sha256Hex(normalized) + safeImageExtension(normalized);
     }
 

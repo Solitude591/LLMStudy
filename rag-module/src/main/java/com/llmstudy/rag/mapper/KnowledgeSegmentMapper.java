@@ -32,17 +32,28 @@ public interface KnowledgeSegmentMapper {
         return findPendingByDocIdValue(docId, SegmentStatus.INIT.value());
     }
 
+    @Select("SELECT * FROM knowledge_segment WHERE version_id = #{versionId} AND status = #{status} AND skip_embedding = 0")
+    List<KnowledgeSegment> findPendingByVersionIdValue(@Param("versionId") String versionId,
+                                                       @Param("status") String status);
+
+    default List<KnowledgeSegment> findPendingByVersionId(String versionId) {
+        return findPendingByVersionIdValue(versionId, SegmentStatus.INIT.value());
+    }
+
     @Select("SELECT * FROM knowledge_segment WHERE status = #{status} ORDER BY created_at DESC")
     List<KnowledgeSegment> findByStatus(@Param("status") String status);
 
     @Select("SELECT COUNT(*) FROM knowledge_segment WHERE doc_id = #{docId}")
     int countByDocId(@Param("docId") String docId);
 
+    @Select("SELECT COUNT(*) FROM knowledge_segment WHERE version_id = #{versionId}")
+    int countByVersionId(@Param("versionId") String versionId);
+
     @Insert("""
             INSERT INTO knowledge_segment
-            (chunk_id, text, doc_id, chunk_order, embedding_id, status, metadata, skip_embedding)
+            (chunk_id, text, doc_id, version_id, chunk_order, embedding_id, status, metadata, skip_embedding)
             VALUES
-            (#{chunkId}, #{text}, #{docId}, #{chunkOrder}, #{embeddingId}, #{status}, #{metadata}, #{skipEmbedding})
+            (#{chunkId}, #{text}, #{docId}, #{versionId}, #{chunkOrder}, #{embeddingId}, #{status}, #{metadata}, #{skipEmbedding})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(KnowledgeSegment segment);
@@ -53,10 +64,10 @@ public interface KnowledgeSegmentMapper {
     @Insert("""
             <script>
             INSERT INTO knowledge_segment
-            (chunk_id, text, doc_id, chunk_order, embedding_id, status, metadata, skip_embedding)
+            (chunk_id, text, doc_id, version_id, chunk_order, embedding_id, status, metadata, skip_embedding)
             VALUES
             <foreach collection="segments" item="s" separator=",">
-                (#{s.chunkId}, #{s.text}, #{s.docId}, #{s.chunkOrder}, #{s.embeddingId}, #{s.status}, #{s.metadata}, #{s.skipEmbedding})
+                (#{s.chunkId}, #{s.text}, #{s.docId}, #{s.versionId}, #{s.chunkOrder}, #{s.embeddingId}, #{s.status}, #{s.metadata}, #{s.skipEmbedding})
             </foreach>
             </script>
             """)

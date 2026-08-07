@@ -3,13 +3,19 @@ package com.llmstudy.rag.controller;
 import com.llmstudy.rag.dto.ApiResult;
 import com.llmstudy.rag.dto.DocumentSplitResult;
 import com.llmstudy.rag.dto.DocumentVO;
+import com.llmstudy.rag.dto.DocumentVersionVO;
+import com.llmstudy.rag.dto.PublishVersionRequest;
+import com.llmstudy.rag.dto.VersionPublishResult;
 import com.llmstudy.rag.enums.DocumentStatus;
 import com.llmstudy.rag.module.knowledge.document.KnowledgeDocumentService;
+import com.llmstudy.rag.module.knowledge.document.DocumentVersionPublicationService;
 import com.llmstudy.rag.module.knowledge.ingestion.chunk.DocumentChunkingService;
 import com.llmstudy.rag.module.knowledge.ingestion.embedding.SegmentEmbeddingService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
 
 /**
  * 知识库文档管理接口
@@ -21,20 +27,22 @@ public class DocumentController {
     private final KnowledgeDocumentService documentService;
     private final DocumentChunkingService chunkingService;
     private final SegmentEmbeddingService embeddingService;
+    private final DocumentVersionPublicationService publicationService;
 
     public DocumentController(KnowledgeDocumentService documentService,
                               DocumentChunkingService chunkingService,
-                              SegmentEmbeddingService embeddingService) {
+                              SegmentEmbeddingService embeddingService,
+                              DocumentVersionPublicationService publicationService) {
         this.documentService = documentService;
         this.chunkingService = chunkingService;
         this.embeddingService = embeddingService;
+        this.publicationService = publicationService;
     }
 
     /**
      * POST /document/upload
      *
-     * 上传文件到 MinIO、创建文档元数据记录，并按文件类型自动处理。
-     * PDF/Word 使用 MinerU；Excel 按 Sheet 创建 MySQL 表并导入数据。
+     * 上传文件到 MinIO，创建逻辑文档和版本 1，并异步执行 RAG 处理。
      * 请求格式：multipart/form-data
      *
      * 参数：
@@ -42,7 +50,7 @@ public class DocumentController {
      * - docTitle:   选填，文档标题（不填则取原始文件名）
      * - uploader:   必填，上传者标识
      * - visibility: 选填，可见范围（private / internal / public），默认 private
-     * - tableName:  Excel 必填，目标 MySQL 基础表名
+     * - tableName:  预留参数，当前版本化 RAG 上传不处理 Excel
      */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ApiResult<DocumentVO> upload(
@@ -56,14 +64,24 @@ public class DocumentController {
         // Controller 只负责接收请求和包装响应；校验、去重、存储、落库及自动解析均由 Service 完成。
         DocumentVO vo = documentService.uploadDocument(
                 file, docTitle, uploader, visibility, tableName);
-        // 重复上传会复用已有文档记录，因此仍返回成功响应，但通过提示语和 duplicate 字段告知前端。
-        String message;
-        if (vo.isDuplicate()) {
-            message = "文件已上传过";
-        } else {
-            message = "上传成功，文档处理中";
-        }
-        return ApiResult.ok(message, vo);
+        return ApiResult.ok("上传成功，文档处理中", vo);
+    }
+
+    /**
+     * POST /document/{docId}/versions
+     *
+     * 为已有逻辑文档创建新版本。新版本完成向量化后进入 READY，
+     * 显式调用 publish 接口前不会影响当前在线版本。
+     */
+    @PostMapping(value = "/{docId}/versions", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResult<DocumentVO> uploadNewVersion(
+            @PathVariable String docId,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("uploader") String uploader,
+            @RequestParam(value = "changeSummary", required = false) String changeSummary) {
+        DocumentVO vo = documentService.uploadNewVersion(
+                docId, file, uploader, changeSummary);
+        return ApiResult.ok("新版本上传成功，处理中", vo);
     }
 
     /**
@@ -80,18 +98,40 @@ public class DocumentController {
         return ApiResult.ok(vo);
     }
 
+    /** 查询文档全部版本，供版本管理页面展示。 */
+    @GetMapping("/{docId}/versions")
+    public ApiResult<?> listVersions(@PathVariable String docId) {
+        List<DocumentVersionVO> versions = documentService.listVersions(docId);
+        if (versions == null) {
+            return ApiResult.fail(404, "文档不存在");
+        }
+        return ApiResult.ok(versions);
+    }
+
+    /** 查询指定版本，前端可轮询 processingStatus/releaseStatus。 */
+    @GetMapping("/{docId}/versions/{versionId}")
+    public ApiResult<?> getVersion(
+            @PathVariable String docId,
+            @PathVariable String versionId) {
+        DocumentVersionVO version = documentService.getVersion(docId, versionId);
+        if (version == null) {
+            return ApiResult.fail(404, "文档版本不存在");
+        }
+        return ApiResult.ok(version);
+    }
+
     /**
-     * POST /document/{docId}/split
+     * POST /document/{versionId}/split
      *
      * 根据解析后的 Markdown 生成父子分片并保存到 knowledge_segment。
      * 当前接口只执行分片入库，segment.status 初始化为 init，不触发向量化。
      */
-    @PostMapping("/{docId}/split")
+    @PostMapping("/{versionId}/split")
     public ApiResult<DocumentSplitResult> splitDocument(
-            @PathVariable String docId) {
-        // Service 内部会校验文档状态、读取 converted_doc_url，并保证重复请求不会重复入库。
+            @PathVariable String versionId) {
+        // Service 内部会校验版本状态、读取 converted_doc_url，并保证重复请求不会重复入库。
         DocumentSplitResult result =
-                chunkingService.splitDocument(docId);
+                chunkingService.splitDocument(versionId);
         String message = result.isAlreadySplit()
                 ? "文档已经完成分片"
                 : "文档分片完成";
@@ -99,16 +139,31 @@ public class DocumentController {
     }
 
     /**
-     * POST /document/{docId}/embed
+     * POST /document/{versionId}/embed
      *
      * 将已分片的 segment 批量向量化并写入 Elasticsearch。
      * 只处理 status='INIT' 且 skip_embedding=0 的 segment。
-     * 文档状态会流转为 vectoring → vector_stored。
+     * 版本状态会流转为 vectoring → vector_stored（READY）。
      */
-    @PostMapping("/{docId}/embed")
-    public ApiResult<Integer> embedSegments(@PathVariable String docId) {
-        int count = embeddingService.embedSegments(docId);
+    @PostMapping("/{versionId}/embed")
+    public ApiResult<Integer> embedSegments(@PathVariable String versionId) {
+        int count = embeddingService.embedSegments(versionId);
         return ApiResult.ok("向量化完成", count);
+    }
+
+    /**
+     * 发布 READY 版本；目标为 ARCHIVED 时表示回滚到该历史版本。
+     */
+    @PostMapping("/{docId}/versions/{versionId}/publish")
+    public ApiResult<VersionPublishResult> publishVersion(
+            @PathVariable String docId,
+            @PathVariable String versionId,
+            @RequestBody(required = false) PublishVersionRequest request) {
+        String expectedCurrentVersionId = request == null
+                ? null : request.expectedCurrentVersionId();
+        VersionPublishResult result = publicationService.publishVersion(
+                docId, versionId, expectedCurrentVersionId);
+        return ApiResult.ok(result.switched() ? "版本发布成功" : "版本已经是当前版本", result);
     }
 
     /**

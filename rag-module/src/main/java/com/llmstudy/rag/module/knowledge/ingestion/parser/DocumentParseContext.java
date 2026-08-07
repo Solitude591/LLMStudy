@@ -1,17 +1,17 @@
 package com.llmstudy.rag.module.knowledge.ingestion.parser;
 
-import com.llmstudy.rag.entity.KnowledgeDocument;
+import com.llmstudy.rag.entity.KnowledgeDocumentVersion;
 
 /**
  * 解析策略的输入上下文。
  *
- * @param document 文档数据库记录；MinerU 策略会使用其中的公网 docUrl。
+ * @param version 物理版本记录；文件类型、公网 docUrl 等快照信息均来自版本。
  */
-public record DocumentParseContext(KnowledgeDocument document) {
+public record DocumentParseContext(KnowledgeDocumentVersion version) {
 
     public DocumentParseContext {
-        if (document == null) {
-            throw new IllegalArgumentException("待解析文档不能为空");
+        if (version == null) {
+            throw new IllegalArgumentException("待解析版本不能为空");
         }
     }
 }

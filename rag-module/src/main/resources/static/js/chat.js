@@ -3,6 +3,12 @@
 
     const TITLE_SYNC_MAX_ATTEMPTS = 12;
     const TITLE_SYNC_INTERVAL_MS = 1_000;
+    const DOCUMENT_STORAGE_KEY = "rag-studio-tracked-documents-v1";
+    const DOCUMENT_POLL_INTERVAL_MS = 4_000;
+    const DOCUMENT_PROCESSING_STEPS = [
+        "UPLOADED", "CONVERTING", "CONVERTED", "SPLITTING",
+        "CHUNKED", "VECTORING", "VECTOR_STORED"
+    ];
 
     const elements = {
         sidebar: document.querySelector("#sidebar"),
@@ -30,6 +36,43 @@
         sendButton: document.querySelector("#sendButton"),
         stopButton: document.querySelector("#stopButton"),
         errorBanner: document.querySelector("#errorBanner"),
+        openKnowledgeButton: document.querySelector("#openKnowledgeButton"),
+        closeKnowledgeButton: document.querySelector("#closeKnowledgeButton"),
+        knowledgePanel: document.querySelector("#knowledgePanel"),
+        knowledgeBackdrop: document.querySelector("#knowledgeBackdrop"),
+        knowledgeHeaderCount: document.querySelector("#knowledgeHeaderCount"),
+        uploadDocumentButton: document.querySelector("#uploadDocumentButton"),
+        attachDocumentForm: document.querySelector("#attachDocumentForm"),
+        attachDocumentId: document.querySelector("#attachDocumentId"),
+        onlineDocumentCount: document.querySelector("#onlineDocumentCount"),
+        processingDocumentCount: document.querySelector("#processingDocumentCount"),
+        trackedDocumentCount: document.querySelector("#trackedDocumentCount"),
+        knowledgeError: document.querySelector("#knowledgeError"),
+        documentSearchInput: document.querySelector("#documentSearchInput"),
+        documentList: document.querySelector("#documentList"),
+        documentDialog: document.querySelector("#documentDialog"),
+        documentUploadForm: document.querySelector("#documentUploadForm"),
+        documentDialogEyebrow: document.querySelector("#documentDialogEyebrow"),
+        documentDialogTitle: document.querySelector("#documentDialogTitle"),
+        documentDialogDescription: document.querySelector("#documentDialogDescription"),
+        closeDocumentDialogButton: document.querySelector("#closeDocumentDialogButton"),
+        cancelDocumentDialogButton: document.querySelector("#cancelDocumentDialogButton"),
+        versionTarget: document.querySelector("#versionTarget"),
+        versionTargetTitle: document.querySelector("#versionTargetTitle"),
+        versionTargetId: document.querySelector("#versionTargetId"),
+        documentTitleField: document.querySelector("#documentTitleField"),
+        documentTitleInput: document.querySelector("#documentTitleInput"),
+        documentUploaderInput: document.querySelector("#documentUploaderInput"),
+        documentVisibilityField: document.querySelector("#documentVisibilityField"),
+        documentVisibilityInput: document.querySelector("#documentVisibilityInput"),
+        changeSummaryField: document.querySelector("#changeSummaryField"),
+        changeSummaryInput: document.querySelector("#changeSummaryInput"),
+        documentDropzone: document.querySelector("#documentDropzone"),
+        documentFileInput: document.querySelector("#documentFileInput"),
+        documentFileLabel: document.querySelector("#documentFileLabel"),
+        documentFileHint: document.querySelector("#documentFileHint"),
+        documentFormError: document.querySelector("#documentFormError"),
+        submitDocumentButton: document.querySelector("#submitDocumentButton"),
         toast: document.querySelector("#toast")
     };
 
@@ -41,6 +84,13 @@
         busy: false,
         loading: false,
         abortController: null,
+        documents: [],
+        activeDocumentId: null,
+        documentDialogMode: "create",
+        documentDialogTargetId: null,
+        documentBusy: false,
+        busyVersionId: null,
+        documentPollTimer: null,
         toastTimer: null
     };
 
@@ -71,8 +121,9 @@
     }
 
     function apiUrl(path) {
-        if (window.location.protocol === "file:") {
-            return `http://localhost:8080${path}`;
+        if (window.location.protocol === "file:" || window.location.port === "4173") {
+            const host = window.location.hostname || "localhost";
+            return `http://${host}:8080${path}`;
         }
         return new URL(path, window.location.origin).toString();
     }
@@ -92,6 +143,18 @@
 
     function messagesEndpoint(conversationId) {
         return `${conversationEndpoint(conversationId)}/messages`;
+    }
+
+    function documentEndpoint(docId) {
+        return apiUrl(`/document/${encodeURIComponent(docId)}`);
+    }
+
+    function documentVersionsEndpoint(docId) {
+        return `${documentEndpoint(docId)}/versions`;
+    }
+
+    function documentPublishEndpoint(docId, versionId) {
+        return `${documentVersionsEndpoint(docId)}/${encodeURIComponent(versionId)}/publish`;
     }
 
     function relativeTime(value) {
@@ -279,7 +342,7 @@
         const title = document.createElement("h2");
         title.textContent = "把知识库，变成答案。";
         const description = document.createElement("p");
-        description.textContent = "会话与历史消息均从 MySQL 读取，可在这里验证完整 RAG 链路。";
+        description.textContent = "在知识库中上传并发布文档版本，再通过对话验证完整 RAG 链路。";
 
         const pipeline = document.createElement("div");
         pipeline.className = "pipeline-strip";
@@ -379,6 +442,571 @@
     function shortId(value) {
         if (!value || value.length <= 18) return value ?? "";
         return `${value.slice(0, 8)}…${value.slice(-6)}`;
+    }
+
+    function loadStoredDocuments() {
+        try {
+            const stored = JSON.parse(window.localStorage.getItem(DOCUMENT_STORAGE_KEY) || "[]");
+            if (!Array.isArray(stored)) return;
+            state.documents = stored
+                .filter(item => item && typeof item.docId === "string" && item.docId.trim())
+                .map(item => ({
+                    docId: item.docId.trim(),
+                    docTitle: item.docTitle?.trim() || "未命名文档",
+                    visibility: item.visibility || "private",
+                    versions: [],
+                    loading: true,
+                    error: null
+                }));
+            state.activeDocumentId = state.documents[0]?.docId ?? null;
+        } catch (error) {
+            console.warn("读取本地文档列表失败", error);
+        }
+    }
+
+    function persistDocuments() {
+        try {
+            const serializable = state.documents.map(document => ({
+                docId: document.docId,
+                docTitle: document.docTitle,
+                visibility: document.visibility
+            }));
+            window.localStorage.setItem(DOCUMENT_STORAGE_KEY, JSON.stringify(serializable));
+        } catch (error) {
+            console.warn("保存本地文档列表失败", error);
+        }
+    }
+
+    function upsertDocument(metadata, versions = null, select = false) {
+        if (!metadata?.docId) return null;
+        let document = state.documents.find(item => item.docId === metadata.docId);
+        if (!document) {
+            document = {
+                docId: metadata.docId,
+                docTitle: metadata.docTitle?.trim() || "未命名文档",
+                visibility: metadata.visibility || "private",
+                versions: [],
+                loading: false,
+                error: null
+            };
+            state.documents.unshift(document);
+        }
+        document.docTitle = metadata.docTitle?.trim() || document.docTitle;
+        document.visibility = metadata.visibility || document.visibility || "private";
+        document.loading = false;
+        document.error = null;
+        if (Array.isArray(versions)) document.versions = versions;
+        if (select || !state.activeDocumentId) state.activeDocumentId = document.docId;
+        persistDocuments();
+        return document;
+    }
+
+    async function refreshDocument(docId, quiet = false) {
+        let document = state.documents.find(item => item.docId === docId);
+        if (document) document.loading = !quiet;
+        if (!quiet) renderKnowledge();
+        try {
+            const [metadataResponse, versionsResponse] = await Promise.all([
+                fetch(documentEndpoint(docId), { headers: { "Accept": "application/json" } }),
+                fetch(documentVersionsEndpoint(docId), { headers: { "Accept": "application/json" } })
+            ]);
+            const [metadata, versions] = await Promise.all([
+                readJsonResponse(metadataResponse), readJsonResponse(versionsResponse)
+            ]);
+            document = upsertDocument(metadata, Array.isArray(versions) ? versions : []);
+            return document;
+        } catch (error) {
+            if (document) {
+                document.loading = false;
+                document.error = error.message;
+            }
+            if (!quiet) showKnowledgeError(error.message);
+            throw error;
+        } finally {
+            renderKnowledge();
+        }
+    }
+
+    async function refreshTrackedDocuments() {
+        const ids = state.documents.map(document => document.docId);
+        if (ids.length === 0) {
+            renderKnowledge();
+            return;
+        }
+        await Promise.allSettled(ids.map(docId => refreshDocument(docId, true)));
+        renderKnowledge();
+        startDocumentPolling();
+    }
+
+    function showKnowledgeError(message) {
+        elements.knowledgeError.textContent = message;
+        elements.knowledgeError.hidden = false;
+    }
+
+    function clearKnowledgeError() {
+        elements.knowledgeError.textContent = "";
+        elements.knowledgeError.hidden = true;
+    }
+
+    function showDocumentFormError(message) {
+        elements.documentFormError.textContent = message;
+        elements.documentFormError.hidden = false;
+    }
+
+    function clearDocumentFormError() {
+        elements.documentFormError.textContent = "";
+        elements.documentFormError.hidden = true;
+    }
+
+    function releaseStatusLabel(version) {
+        if (version.errorMessage) return "处理失败";
+        switch ((version.releaseStatus || "").toUpperCase()) {
+            case "PUBLISHED": return "已上线";
+            case "READY": return "待发布";
+            case "ARCHIVED": return "历史版本";
+            case "PUBLISHING": return "发布中";
+            default: return processingStatusLabel(version.processingStatus);
+        }
+    }
+
+    function processingStatusLabel(status) {
+        const labels = {
+            INIT: "等待处理",
+            UPLOADED: "文件已上传",
+            IMPORTING: "正在导入",
+            IMPORTED: "导入完成",
+            CONVERTING: "正在解析",
+            CONVERTED: "解析完成",
+            SPLITTING: "正在分片",
+            CHUNKED: "分片完成",
+            VECTORING: "正在向量化",
+            VECTOR_STORED: "处理完成"
+        };
+        return labels[(status || "").toUpperCase()] || status || "等待处理";
+    }
+
+    function statusTone(version) {
+        if (version.errorMessage) return "is-error";
+        switch ((version.releaseStatus || "").toUpperCase()) {
+            case "PUBLISHED": return "is-published";
+            case "READY": return "is-ready";
+            case "ARCHIVED": return "is-archived";
+            default: return "is-processing";
+        }
+    }
+
+    function createStatusPill(version) {
+        const pill = document.createElement("span");
+        pill.className = `status-pill ${statusTone(version)}`;
+        pill.textContent = releaseStatusLabel(version);
+        return pill;
+    }
+
+    function isProcessingVersion(version) {
+        const releaseStatus = (version.releaseStatus || "").toUpperCase();
+        return !version.errorMessage && ["PREPARING", "PUBLISHING", ""].includes(releaseStatus);
+    }
+
+    function processingProgress(status) {
+        const normalized = (status || "").toUpperCase();
+        const index = DOCUMENT_PROCESSING_STEPS.indexOf(normalized);
+        if (index < 0) return normalized === "IMPORTING" || normalized === "IMPORTED" ? 18 : 8;
+        return Math.round(((index + 1) / DOCUMENT_PROCESSING_STEPS.length) * 100);
+    }
+
+    function formatDocumentDate(value) {
+        const date = value ? new Date(value) : null;
+        if (!date || !Number.isFinite(date.getTime())) return "时间未知";
+        return date.toLocaleString("zh-CN", {
+            month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false
+        });
+    }
+
+    function createVersionNode(document, version) {
+        const item = documentNode("article", `version-item${version.current ? " is-current" : ""}`);
+        const heading = documentNode("div", "version-heading");
+        const title = documentNode("strong", null, `v${version.versionNo ?? "-"}`);
+        heading.append(title, createStatusPill(version));
+
+        const summary = documentNode(
+            "p", "version-summary",
+            version.changeSummary?.trim() || (version.versionNo === 1 ? "初始版本" : "未填写版本说明")
+        );
+        const meta = documentNode("div", "version-meta");
+        meta.append(
+            documentNode("span", null, processingStatusLabel(version.processingStatus)),
+            documentNode("span", null, version.fileType?.toUpperCase() || "DOCUMENT"),
+            documentNode("span", null, formatDocumentDate(version.createdAt))
+        );
+        item.append(heading, summary, meta);
+
+        if (isProcessingVersion(version)) {
+            const progress = documentNode("div", "version-progress");
+            const bar = documentNode("span");
+            bar.style.width = `${processingProgress(version.processingStatus)}%`;
+            progress.append(bar);
+            item.append(progress);
+        }
+        if (version.errorMessage) {
+            item.append(documentNode("p", "version-error", version.errorMessage));
+        }
+
+        const footer = documentNode("div", "version-footer");
+        footer.append(documentNode("code", null, shortId(version.versionId)));
+        const releaseStatus = (version.releaseStatus || "").toUpperCase();
+        if (version.current) {
+            const current = documentNode("button", "version-action-button", "线上版本");
+            current.type = "button";
+            current.disabled = true;
+            footer.append(current);
+        } else if (releaseStatus === "READY" || releaseStatus === "ARCHIVED") {
+            const action = documentNode(
+                "button",
+                `version-action-button${releaseStatus === "ARCHIVED" ? " is-rollback" : ""}`,
+                releaseStatus === "ARCHIVED" ? "回滚至此" : "发布上线"
+            );
+            action.type = "button";
+            action.disabled = state.busyVersionId === version.versionId;
+            if (action.disabled) action.textContent = "正在切换";
+            action.addEventListener("click", event => {
+                event.stopPropagation();
+                void publishDocumentVersion(document.docId, version);
+            });
+            footer.append(action);
+        }
+        item.append(footer);
+        return item;
+    }
+
+    function createDocumentCard(document) {
+        const selected = document.docId === state.activeDocumentId;
+        const card = documentNode("article", `document-card${selected ? " is-selected" : ""}`);
+        const summary = documentNode("button", "document-summary-button");
+        summary.type = "button";
+        summary.setAttribute("aria-expanded", String(selected));
+        const copy = documentNode("span", "document-summary-copy");
+        copy.append(
+            documentNode("strong", null, document.docTitle || "未命名文档"),
+            documentNode("code", null, document.docId)
+        );
+        const versions = Array.isArray(document.versions) ? document.versions : [];
+        const currentVersion = versions.find(version => version.current);
+        const versionCount = documentNode(
+            "span", "document-version-count",
+            document.loading ? "同步中" : `${versions.length} 个版本`
+        );
+        const currentLine = documentNode("span", "document-current-line");
+        if (currentVersion) {
+            currentLine.append(
+                createStatusPill(currentVersion),
+                documentNode("span", null, `v${currentVersion.versionNo} 正在服务线上问答`)
+            );
+        } else {
+            const latest = versions[0];
+            if (latest) currentLine.append(createStatusPill(latest));
+            currentLine.append(documentNode("span", null, document.error || "尚未发布线上版本"));
+        }
+        summary.append(copy, versionCount, currentLine);
+        summary.addEventListener("click", () => {
+            state.activeDocumentId = document.docId;
+            renderKnowledge();
+        });
+        card.append(summary);
+
+        if (selected) {
+            const details = documentNode("div", "document-details");
+            const toolbar = documentNode("div", "document-detail-toolbar");
+            toolbar.append(documentNode("span", null, "版本历史"));
+            const newVersion = documentNode("button", "new-version-button", "上传新版本");
+            newVersion.type = "button";
+            newVersion.addEventListener("click", () => openDocumentDialog("version", document.docId));
+            toolbar.append(newVersion);
+            details.append(toolbar);
+            const list = documentNode("div", "version-list");
+            if (document.loading && versions.length === 0) {
+                list.append(documentNode("p", "document-empty", "正在同步版本状态…"));
+            } else if (versions.length === 0) {
+                list.append(documentNode("p", "document-empty", "暂未读取到版本。"));
+            } else {
+                [...versions]
+                    .sort((left, right) => (right.versionNo ?? 0) - (left.versionNo ?? 0))
+                    .forEach(version => list.append(createVersionNode(document, version)));
+            }
+            details.append(list);
+            card.append(details);
+        }
+        return card;
+    }
+
+    function documentNode(tagName, className = null, text = null) {
+        const node = document.createElement(tagName);
+        if (className) node.className = className;
+        if (text !== null) node.textContent = text;
+        return node;
+    }
+
+    function renderKnowledge() {
+        const allDocuments = state.documents;
+        const versions = allDocuments.flatMap(document => document.versions || []);
+        const onlineCount = allDocuments.filter(document =>
+            (document.versions || []).some(version => version.current)).length;
+        const processingCount = versions.filter(isProcessingVersion).length;
+        elements.onlineDocumentCount.textContent = String(onlineCount);
+        elements.processingDocumentCount.textContent = String(processingCount);
+        elements.trackedDocumentCount.textContent = String(allDocuments.length);
+        elements.knowledgeHeaderCount.textContent = String(allDocuments.length);
+
+        const keyword = elements.documentSearchInput.value.trim().toLowerCase();
+        const visibleDocuments = allDocuments.filter(document =>
+            !keyword || document.docTitle.toLowerCase().includes(keyword)
+            || document.docId.toLowerCase().includes(keyword));
+        elements.documentList.replaceChildren();
+        if (visibleDocuments.length === 0) {
+            const empty = documentNode("div", "document-empty");
+            empty.append(
+                documentNode("strong", null, keyword ? "没有匹配的文档" : "还没有关联文档"),
+                documentNode("span", null, keyword
+                    ? "可以按标题或完整 docId 搜索。"
+                    : "上传首个文件，或输入已有 docId 继续管理版本。")
+            );
+            elements.documentList.append(empty);
+            return;
+        }
+        visibleDocuments.forEach(document => elements.documentList.append(createDocumentCard(document)));
+    }
+
+    async function publishDocumentVersion(docId, version) {
+        const document = state.documents.find(item => item.docId === docId);
+        if (!document || state.busyVersionId) return;
+        const currentVersion = (document.versions || []).find(item => item.current);
+        const rollback = (version.releaseStatus || "").toUpperCase() === "ARCHIVED";
+        const action = rollback ? "回滚" : "发布";
+        if (!window.confirm(`${action}“${document.docTitle}”的 v${version.versionNo}？\n切换完成后，新会话将检索这个版本。`)) {
+            return;
+        }
+
+        state.busyVersionId = version.versionId;
+        clearKnowledgeError();
+        renderKnowledge();
+        try {
+            const response = await fetch(documentPublishEndpoint(docId, version.versionId), {
+                method: "POST",
+                headers: { "Accept": "application/json", "Content-Type": "application/json" },
+                body: JSON.stringify({ expectedCurrentVersionId: currentVersion?.versionId ?? null })
+            });
+            await readJsonResponse(response);
+            await refreshDocument(docId, true);
+            showToast(`${action}成功，当前线上版本为 v${version.versionNo}`);
+        } catch (error) {
+            showKnowledgeError(error.message);
+        } finally {
+            state.busyVersionId = null;
+            renderKnowledge();
+            startDocumentPolling();
+        }
+    }
+
+    function openDocumentDialog(mode, docId = null) {
+        if (state.documentBusy) return;
+        const target = docId
+            ? state.documents.find(document => document.docId === docId)
+            : null;
+        if (mode === "version" && !target) {
+            showKnowledgeError("没有找到需要创建新版本的逻辑文档。");
+            return;
+        }
+        state.documentDialogMode = mode;
+        state.documentDialogTargetId = target?.docId ?? null;
+        elements.documentUploadForm.reset();
+        elements.documentUploaderInput.value = elements.userIdInput.value.trim() || "default";
+        elements.documentVisibilityInput.value = "private";
+        elements.versionTarget.hidden = mode !== "version";
+        elements.documentTitleField.hidden = mode === "version";
+        elements.documentVisibilityField.hidden = mode === "version";
+        elements.changeSummaryField.hidden = mode !== "version";
+        elements.documentDialogEyebrow.textContent = mode === "version" ? "NEW SNAPSHOT" : "NEW DOCUMENT";
+        elements.documentDialogTitle.textContent = mode === "version" ? "上传新版本" : "上传新文档";
+        elements.documentDialogDescription.textContent = mode === "version"
+            ? "新版本独立处理，发布前不会影响当前线上内容。"
+            : "创建逻辑文档并生成第一个物理版本。";
+        elements.submitDocumentButton.textContent = mode === "version" ? "上传并处理" : "开始上传";
+        if (target) {
+            elements.versionTargetTitle.textContent = target.docTitle;
+            elements.versionTargetId.textContent = target.docId;
+        }
+        clearDocumentFormError();
+        updateFileSelection();
+        if (!elements.documentDialog.open) elements.documentDialog.showModal();
+    }
+
+    function closeDocumentDialog() {
+        if (state.documentBusy) return;
+        if (elements.documentDialog.open) elements.documentDialog.close();
+    }
+
+    function updateFileSelection() {
+        const file = elements.documentFileInput.files?.[0];
+        elements.documentDropzone.classList.toggle("has-file", Boolean(file));
+        if (!file) {
+            elements.documentFileLabel.textContent = "选择 PDF、DOC 或 DOCX 文件";
+            elements.documentFileHint.textContent = "点击选择，或将文件拖放到此处";
+            return;
+        }
+        elements.documentFileLabel.textContent = file.name;
+        elements.documentFileHint.textContent = `${formatFileSize(file.size)} · 已准备上传`;
+        if (state.documentDialogMode === "create" && !elements.documentTitleInput.value.trim()) {
+            elements.documentTitleInput.value = file.name.replace(/\.[^.]+$/, "");
+        }
+    }
+
+    function formatFileSize(bytes) {
+        if (!Number.isFinite(bytes) || bytes < 1024) return `${bytes || 0} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function isAcceptedDocument(file) {
+        return Boolean(file && /\.(pdf|doc|docx)$/i.test(file.name));
+    }
+
+    async function submitDocumentUpload() {
+        if (state.documentBusy) return;
+        const file = elements.documentFileInput.files?.[0];
+        const uploader = elements.documentUploaderInput.value.trim();
+        if (!file) {
+            showDocumentFormError("请选择需要上传的文档文件。");
+            return;
+        }
+        if (!isAcceptedDocument(file)) {
+            showDocumentFormError("当前仅支持 PDF、DOC 和 DOCX 文件。");
+            return;
+        }
+        if (!uploader) {
+            showDocumentFormError("请填写上传者标识。");
+            elements.documentUploaderInput.focus();
+            return;
+        }
+
+        const mode = state.documentDialogMode;
+        const targetId = state.documentDialogTargetId;
+        if (mode === "version" && !targetId) {
+            showDocumentFormError("缺少目标文档 ID，请关闭后重试。");
+            return;
+        }
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("uploader", uploader);
+        let endpoint;
+        if (mode === "version") {
+            endpoint = documentVersionsEndpoint(targetId);
+            const summary = elements.changeSummaryInput.value.trim();
+            if (summary) formData.append("changeSummary", summary);
+        } else {
+            endpoint = apiUrl("/document/upload");
+            const title = elements.documentTitleInput.value.trim();
+            if (title) formData.append("docTitle", title);
+            formData.append("visibility", elements.documentVisibilityInput.value || "private");
+        }
+
+        state.documentBusy = true;
+        clearDocumentFormError();
+        elements.submitDocumentButton.disabled = true;
+        elements.submitDocumentButton.textContent = "正在上传…";
+        try {
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Accept": "application/json" },
+                body: formData
+            });
+            const metadata = await readJsonResponse(response);
+            upsertDocument(metadata, null, true);
+            elements.documentDialog.close();
+            await refreshDocument(metadata.docId || targetId, true);
+            clearKnowledgeError();
+            openKnowledgePanel();
+            showToast(mode === "version"
+                ? `v${metadata.versionNo ?? "新"} 已上传，完成处理后可发布`
+                : "文档已上传，正在生成第一个版本");
+        } catch (error) {
+            showDocumentFormError(error.message);
+        } finally {
+            state.documentBusy = false;
+            elements.submitDocumentButton.disabled = false;
+            elements.submitDocumentButton.textContent = mode === "version" ? "上传并处理" : "开始上传";
+            renderKnowledge();
+            startDocumentPolling();
+        }
+    }
+
+    async function attachDocument() {
+        const docId = elements.attachDocumentId.value.trim();
+        if (!docId || state.documentBusy) {
+            if (!docId) showKnowledgeError("请输入需要关联的 docId。");
+            return;
+        }
+        clearKnowledgeError();
+        const existing = state.documents.find(document => document.docId === docId);
+        if (!existing) {
+            state.documents.unshift({
+                docId,
+                docTitle: "正在读取文档…",
+                visibility: "private",
+                versions: [],
+                loading: true,
+                error: null
+            });
+        }
+        state.activeDocumentId = docId;
+        renderKnowledge();
+        try {
+            await refreshDocument(docId, true);
+            elements.attachDocumentId.value = "";
+            showToast("文档已关联到当前工作台");
+        } catch (error) {
+            if (!existing) state.documents = state.documents.filter(document => document.docId !== docId);
+            state.activeDocumentId = state.documents[0]?.docId ?? null;
+            showKnowledgeError(error.message);
+            renderKnowledge();
+        }
+    }
+
+    function startDocumentPolling() {
+        window.clearInterval(state.documentPollTimer);
+        const hasProcessing = state.documents.some(document =>
+            (document.versions || []).some(isProcessingVersion));
+        if (!hasProcessing) {
+            state.documentPollTimer = null;
+            return;
+        }
+        state.documentPollTimer = window.setInterval(async () => {
+            if (state.documentBusy || state.busyVersionId) return;
+            const ids = state.documents
+                .filter(document => (document.versions || []).some(isProcessingVersion))
+                .map(document => document.docId);
+            await Promise.allSettled(ids.map(docId => refreshDocument(docId, true)));
+            startDocumentPolling();
+        }, DOCUMENT_POLL_INTERVAL_MS);
+    }
+
+    function openKnowledgePanel() {
+        closeSidebar();
+        if (window.matchMedia("(max-width: 1220px)").matches) {
+            elements.knowledgePanel.classList.add("is-open");
+        }
+        syncKnowledgePanelState();
+        window.setTimeout(() => elements.documentSearchInput.focus(), 80);
+    }
+
+    function closeKnowledgePanel() {
+        elements.knowledgePanel.classList.remove("is-open");
+        syncKnowledgePanelState();
+    }
+
+    function syncKnowledgePanelState() {
+        const drawer = window.matchMedia("(max-width: 1220px)").matches;
+        const open = !drawer || elements.knowledgePanel.classList.contains("is-open");
+        elements.openKnowledgeButton.setAttribute("aria-expanded", String(open));
+        elements.knowledgeBackdrop.hidden = !drawer || !open;
     }
 
     function renderMessages() {
@@ -809,6 +1437,7 @@
     }
 
     function openSidebar() {
+        closeKnowledgePanel();
         elements.sidebar.classList.add("is-open");
         elements.sidebarBackdrop.hidden = false;
     }
@@ -821,6 +1450,7 @@
     function renderAll() {
         renderSessions();
         renderMessages();
+        renderKnowledge();
     }
 
     function bindEvents() {
@@ -829,6 +1459,45 @@
         elements.openSidebarButton.addEventListener("click", openSidebar);
         elements.closeSidebarButton.addEventListener("click", closeSidebar);
         elements.sidebarBackdrop.addEventListener("click", closeSidebar);
+        elements.openKnowledgeButton.addEventListener("click", openKnowledgePanel);
+        elements.closeKnowledgeButton.addEventListener("click", closeKnowledgePanel);
+        elements.knowledgeBackdrop.addEventListener("click", closeKnowledgePanel);
+        elements.uploadDocumentButton.addEventListener("click", () => openDocumentDialog("create"));
+        elements.documentSearchInput.addEventListener("input", renderKnowledge);
+        elements.attachDocumentForm.addEventListener("submit", event => {
+            event.preventDefault();
+            void attachDocument();
+        });
+        elements.documentFileInput.addEventListener("change", updateFileSelection);
+        ["dragenter", "dragover"].forEach(type => {
+            elements.documentDropzone.addEventListener(type, event => {
+                event.preventDefault();
+                elements.documentDropzone.classList.add("is-dragging");
+            });
+        });
+        ["dragleave", "drop"].forEach(type => {
+            elements.documentDropzone.addEventListener(type, event => {
+                event.preventDefault();
+                elements.documentDropzone.classList.remove("is-dragging");
+            });
+        });
+        elements.documentDropzone.addEventListener("drop", event => {
+            const files = event.dataTransfer?.files;
+            if (files?.length) {
+                elements.documentFileInput.files = files;
+                updateFileSelection();
+            }
+        });
+        elements.documentUploadForm.addEventListener("submit", event => {
+            event.preventDefault();
+            void submitDocumentUpload();
+        });
+        elements.closeDocumentDialogButton.addEventListener("click", closeDocumentDialog);
+        elements.cancelDocumentDialogButton.addEventListener("click", closeDocumentDialog);
+        elements.documentDialog.addEventListener("cancel", event => {
+            if (state.documentBusy) event.preventDefault();
+        });
+        window.addEventListener("resize", syncKnowledgePanelState);
         elements.modeButtons.forEach(button => {
             button.addEventListener("click", () => setMode(button.dataset.mode));
         });
@@ -872,14 +1541,21 @@
                 event.preventDefault();
                 newChat();
             }
-            if (event.key === "Escape") closeSidebar();
+            if (event.key === "Escape") {
+                closeSidebar();
+                closeKnowledgePanel();
+            }
         });
     }
 
     async function initialize() {
+        loadStoredDocuments();
         bindEvents();
         setMode(state.mode);
         resizeComposer();
+        syncKnowledgePanelState();
+        renderKnowledge();
+        void refreshTrackedDocuments();
         setStatus("正在读取会话", "busy");
         try {
             await refreshConversations();

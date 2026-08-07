@@ -1,6 +1,7 @@
 package com.llmstudy.rag.module.rag.retrieval;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.FieldValue;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
 import com.llmstudy.rag.config.ElasticsearchProperties;
@@ -37,10 +38,33 @@ public class Bm25Retriever {
      * @throws IOException Elasticsearch 请求失败
      */
     public List<RetrievalCandidate> retrieve(String originalQuestion) throws IOException {
+        return search(originalQuestion, null);
+    }
+
+    /** 仅在当前已发布版本集合内执行词面检索。 */
+    public List<RetrievalCandidate> retrieve(String originalQuestion,
+                                             List<String> currentVersionIds) throws IOException {
+        if (currentVersionIds == null || currentVersionIds.isEmpty()) {
+            return List.of();
+        }
+        return search(originalQuestion, currentVersionIds);
+    }
+
+    private List<RetrievalCandidate> search(String originalQuestion,
+                                            List<String> currentVersionIds) throws IOException {
         SearchResponse<Document> response = client.search(request -> request
                         .index(properties.getIndexName())
-                        .query(query -> query.match(match -> match
-                                .field("text").query(originalQuestion)))
+                        .query(query -> currentVersionIds == null
+                                ? query.match(match -> match
+                                        .field("text").query(originalQuestion))
+                                : query.bool(bool -> bool
+                                        .must(must -> must.match(match -> match
+                                                .field("text").query(originalQuestion)))
+                                        .filter(filter -> filter.terms(terms -> terms
+                                                .field("metadata.version_id.keyword")
+                                                .terms(values -> values.value(currentVersionIds.stream()
+                                                        .map(FieldValue::of)
+                                                        .toList()))))))
                         .size(RESULTS_PER_CHANNEL),
                 Document.class);
         List<RetrievalCandidate> candidates = new ArrayList<>();

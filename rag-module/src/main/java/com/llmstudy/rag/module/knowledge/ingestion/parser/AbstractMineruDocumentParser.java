@@ -21,6 +21,6 @@ public abstract class AbstractMineruDocumentParser implements DocumentParserStra
     @Override
     public final DocumentParseResult parse(DocumentParseContext context) {
         // MinerU 当前任务接口接收公网 URL，由服务端从 MinIO 拉取原始文件。
-        return mineruClient.parse(context.document().getDocUrl());
+        return mineruClient.parse(context.version().getDocUrl());
     }
 }

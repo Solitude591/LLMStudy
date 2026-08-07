@@ -21,6 +21,9 @@ public class KnowledgeSegment {
     /** 所属文档的业务 ID，对应 knowledge_document.doc_id。 */
     private String docId;
 
+    /** 所属物理版本 ID，与 docId 共同唯一确定片段的文档快照。 */
+    private String versionId;
+
     /** 分片在原文中的顺序，从而在召回后仍可恢复相邻片段和原始上下文。 */
     private Integer chunkOrder;
 
@@ -72,6 +75,14 @@ public class KnowledgeSegment {
 
     public void setDocId(String docId) {
         this.docId = docId;
+    }
+
+    public String getVersionId() {
+        return versionId;
+    }
+
+    public void setVersionId(String versionId) {
+        this.versionId = versionId;
     }
 
     public Integer getChunkOrder() {
@@ -153,6 +164,7 @@ public class KnowledgeSegment {
                 "id=" + id +
                 ", chunkId='" + chunkId + '\'' +
                 ", docId='" + docId + '\'' +
+                ", versionId='" + versionId + '\'' +
                 ", chunkOrder=" + chunkOrder +
                 ", embeddingId='" + embeddingId + '\'' +
                 ", status='" + status + '\'' +

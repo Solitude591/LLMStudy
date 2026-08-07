@@ -1,148 +1,74 @@
 CREATE TABLE IF NOT EXISTS `knowledge_document`
 (
-    `id`              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    `doc_id`          BIGINT       NOT NULL COMMENT '文档唯一标识（雪花算法生成）',
-    `doc_title`       VARCHAR(255) NOT NULL COMMENT '文档标题',
-    `original_name`   VARCHAR(255) NOT NULL COMMENT '原始文件名',
-    `file_type`       VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '文件类型（pdf、docx、txt 等）',
-    `file_size`       BIGINT       NOT NULL DEFAULT 0 COMMENT '文件大小（字节）',
-    `file_md5`        CHAR(32)              DEFAULT NULL COMMENT '文件内容 MD5，用于防止同一用户重复上传',
-    `target_table_name` VARCHAR(48) NOT NULL DEFAULT '' COMMENT 'Excel 导入的目标基础表名',
-    `uploader`        VARCHAR(64)  NOT NULL COMMENT '上传者',
-    `doc_url`         VARCHAR(512) NOT NULL DEFAULT '' COMMENT 'MinIO 存储路径（bucket/key）',
-    `raw_object_key`  VARCHAR(512) NOT NULL DEFAULT '' COMMENT '原始文件的 MinIO object key',
-    `doc_status`        VARCHAR(32)  NOT NULL DEFAULT 'INIT' COMMENT '文档状态：INIT, UPLOADED, IMPORTING, IMPORTED, CONVERTING, CONVERTED, SPLITTING, CHUNKED, VECTORING, VECTOR_STORED',
-    `converted_doc_url` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '解析后的 markdown 文件 MinIO 路径',
-    `error_message`     TEXT                  DEFAULT NULL COMMENT '处理失败时的错误信息',
-    `retry_count`       INT          NOT NULL DEFAULT 0 COMMENT '自动补偿重试次数，达到上限后停止补偿等待人工处理',
-    `visibility`      VARCHAR(16)  NOT NULL DEFAULT 'private' COMMENT '可见范围：private-仅自己可见, internal-内部可见, public-公开',
-    `created_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `id`                 BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+    `doc_id`             BIGINT       NOT NULL COMMENT '逻辑文档唯一标识（雪花算法生成）',
+    `doc_title`          VARCHAR(255) NOT NULL COMMENT '文档标题',
+    `accessible_by`      VARCHAR(255)          DEFAULT NULL COMMENT '预留的可访问主体标识，当前不参与权限校验',
+    `current_version_id` BIGINT                DEFAULT NULL COMMENT '当前已发布的物理版本 ID，首次发布前为 NULL',
+    `created_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_doc_id` (`doc_id`),
-    UNIQUE KEY `uk_uploader_file_table` (`uploader`, `file_md5`, `target_table_name`),
-    KEY `idx_uploader` (`uploader`),
-    KEY `idx_doc_status` (`doc_status`),
-    KEY `idx_visibility` (`visibility`),
+    KEY `idx_doc_current_version` (`doc_id`, `current_version_id`),
     KEY `idx_created_at` (`created_at`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
-  COLLATE = utf8mb4_unicode_ci COMMENT ='知识库文档元数据表';
+  COLLATE = utf8mb4_unicode_ci COMMENT ='知识库逻辑文档表';
 
--- 兼容已经创建过的 knowledge_document 表：缺少字段或索引时才执行迁移。
-SET @file_md5_column_exists = (
+
+CREATE TABLE IF NOT EXISTS `knowledge_document_version`
+(
+    `id`                 BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+    `version_id`         BIGINT       NOT NULL COMMENT '物理版本唯一标识（雪花算法生成）',
+    `doc_id`             BIGINT       NOT NULL COMMENT '所属逻辑文档 ID',
+    `version_no`         INT UNSIGNED NOT NULL COMMENT '逻辑文档内递增的展示版本号，从 1 开始',
+    `content_hash`       CHAR(64)     NOT NULL COMMENT '原始文件内容 SHA-256',
+    `file_type`          VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '文件类型，用于选择文档解析策略',
+    `uploaded_by`        VARCHAR(64)  NOT NULL COMMENT '该版本上传者',
+    `doc_url`            VARCHAR(512) NOT NULL DEFAULT '' COMMENT '原始文件访问地址',
+    `raw_object_key`     VARCHAR(512) NOT NULL DEFAULT '' COMMENT '原始文件的 MinIO object key',
+    `converted_doc_url`  VARCHAR(512) NOT NULL DEFAULT '' COMMENT '解析后的 Markdown 文件地址',
+    `processing_status`  VARCHAR(32)  NOT NULL DEFAULT 'INIT' COMMENT '处理状态：INIT, UPLOADED, CONVERTING, CONVERTED, SPLITTING, CHUNKED, VECTORING, VECTOR_STORED',
+    `release_status`     VARCHAR(32)  NOT NULL DEFAULT 'PREPARING' COMMENT '发布状态：PREPARING, READY, PUBLISHING, PUBLISHED, ARCHIVED',
+    `error_message`      TEXT                  DEFAULT NULL COMMENT '处理失败原因',
+    `retry_count`        INT          NOT NULL DEFAULT 0 COMMENT '自动补偿重试次数',
+    `change_summary`     VARCHAR(512)          DEFAULT NULL COMMENT '版本变更说明',
+    `ready_at`           DATETIME              DEFAULT NULL COMMENT '完成向量化、可发布的时间',
+    `published_at`       DATETIME              DEFAULT NULL COMMENT '最近一次发布时间',
+    `created_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_document_version_id` (`version_id`),
+    UNIQUE KEY `uk_document_version_no` (`doc_id`, `version_no`),
+    UNIQUE KEY `uk_document_version_pair` (`doc_id`, `version_id`),
+    UNIQUE KEY `uk_document_version_hash` (`doc_id`, `content_hash`),
+    KEY `idx_document_version_processing_status` (`processing_status`),
+    KEY `idx_document_version_release_status` (`release_status`),
+    KEY `idx_document_version_created_at` (`doc_id`, `created_at`),
+    CONSTRAINT `fk_document_version_doc` FOREIGN KEY (`doc_id`)
+        REFERENCES `knowledge_document` (`doc_id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT = '知识库文档物理版本快照表';
+
+-- 使用复合外键保证 current_version_id 只能指向当前逻辑文档下的版本。
+-- schema.sql 会在每次启动时执行，因此约束只在首次创建时添加。
+SET @current_version_fk_exists = (
     SELECT COUNT(*)
-    FROM information_schema.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
+    FROM information_schema.TABLE_CONSTRAINTS
+    WHERE CONSTRAINT_SCHEMA = DATABASE()
       AND TABLE_NAME = 'knowledge_document'
-      AND COLUMN_NAME = 'file_md5'
+      AND CONSTRAINT_NAME = 'fk_document_current_version'
+      AND CONSTRAINT_TYPE = 'FOREIGN KEY'
 );
-SET @file_md5_column_sql = IF(
-    @file_md5_column_exists = 0,
-    'ALTER TABLE `knowledge_document` ADD COLUMN `file_md5` CHAR(32) DEFAULT NULL COMMENT ''文件内容 MD5，用于防止同一用户重复上传'' AFTER `file_size`',
+SET @current_version_fk_sql = IF(
+    @current_version_fk_exists = 0,
+    'ALTER TABLE `knowledge_document` ADD CONSTRAINT `fk_document_current_version` FOREIGN KEY (`doc_id`, `current_version_id`) REFERENCES `knowledge_document_version` (`doc_id`, `version_id`) ON DELETE RESTRICT ON UPDATE RESTRICT',
     'SELECT 1'
 );
-PREPARE file_md5_stmt FROM @file_md5_column_sql;
-EXECUTE file_md5_stmt;
-DEALLOCATE PREPARE file_md5_stmt;
-
-SET @target_table_name_column_exists = (
-    SELECT COUNT(*)
-    FROM information_schema.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'knowledge_document'
-      AND COLUMN_NAME = 'target_table_name'
-);
-SET @target_table_name_column_sql = IF(
-    @target_table_name_column_exists = 0,
-    'ALTER TABLE `knowledge_document` ADD COLUMN `target_table_name` VARCHAR(48) NOT NULL DEFAULT '''' COMMENT ''Excel 导入的目标基础表名'' AFTER `file_md5`',
-    'SELECT 1'
-);
-PREPARE target_table_name_stmt FROM @target_table_name_column_sql;
-EXECUTE target_table_name_stmt;
-DEALLOCATE PREPARE target_table_name_stmt;
-
-SET @raw_object_key_column_exists = (
-    SELECT COUNT(*)
-    FROM information_schema.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'knowledge_document'
-      AND COLUMN_NAME = 'raw_object_key'
-);
-SET @raw_object_key_column_sql = IF(
-    @raw_object_key_column_exists = 0,
-    'ALTER TABLE `knowledge_document` ADD COLUMN `raw_object_key` VARCHAR(512) NOT NULL DEFAULT '''' COMMENT ''原始文件的 MinIO object key'' AFTER `doc_url`',
-    'SELECT 1'
-);
-PREPARE raw_object_key_stmt FROM @raw_object_key_column_sql;
-EXECUTE raw_object_key_stmt;
-DEALLOCATE PREPARE raw_object_key_stmt;
-
-SET @old_file_md5_index_exists = (
-    SELECT COUNT(*)
-    FROM information_schema.STATISTICS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'knowledge_document'
-      AND INDEX_NAME = 'uk_uploader_file_md5'
-);
-SET @drop_old_file_md5_index_sql = IF(
-    @old_file_md5_index_exists > 0,
-    'ALTER TABLE `knowledge_document` DROP INDEX `uk_uploader_file_md5`',
-    'SELECT 1'
-);
-PREPARE drop_old_file_md5_index_stmt FROM @drop_old_file_md5_index_sql;
-EXECUTE drop_old_file_md5_index_stmt;
-DEALLOCATE PREPARE drop_old_file_md5_index_stmt;
-
-SET @file_table_index_exists = (
-    SELECT COUNT(*)
-    FROM information_schema.STATISTICS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'knowledge_document'
-      AND INDEX_NAME = 'uk_uploader_file_table'
-);
-SET @file_table_index_sql = IF(
-    @file_table_index_exists = 0,
-    'CREATE UNIQUE INDEX `uk_uploader_file_table` ON `knowledge_document` (`uploader`, `file_md5`, `target_table_name`)',
-    'SELECT 1'
-);
-PREPARE file_table_index_stmt FROM @file_table_index_sql;
-EXECUTE file_table_index_stmt;
-DEALLOCATE PREPARE file_table_index_stmt;
-
--- 兼容已存在的表：添加 error_message 字段用于记录处理失败的错误信息
-SET @error_message_column_exists = (
-    SELECT COUNT(*)
-    FROM information_schema.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'knowledge_document'
-      AND COLUMN_NAME = 'error_message'
-);
-SET @error_message_column_sql = IF(
-    @error_message_column_exists = 0,
-    'ALTER TABLE `knowledge_document` ADD COLUMN `error_message` TEXT DEFAULT NULL COMMENT ''处理失败时的错误信息'' AFTER `converted_doc_url`',
-    'SELECT 1'
-);
-PREPARE error_message_stmt FROM @error_message_column_sql;
-EXECUTE error_message_stmt;
-DEALLOCATE PREPARE error_message_stmt;
-
--- 兼容已存在的表：添加 retry_count 字段用于记录自动补偿重试次数
-SET @retry_count_column_exists = (
-    SELECT COUNT(*)
-    FROM information_schema.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'knowledge_document'
-      AND COLUMN_NAME = 'retry_count'
-);
-SET @retry_count_column_sql = IF(
-    @retry_count_column_exists = 0,
-    'ALTER TABLE `knowledge_document` ADD COLUMN `retry_count` INT NOT NULL DEFAULT 0 COMMENT ''自动补偿重试次数，达到上限后停止补偿等待人工处理'' AFTER `error_message`',
-    'SELECT 1'
-);
-PREPARE retry_count_stmt FROM @retry_count_column_sql;
-EXECUTE retry_count_stmt;
-DEALLOCATE PREPARE retry_count_stmt;
+PREPARE current_version_fk_stmt FROM @current_version_fk_sql;
+EXECUTE current_version_fk_stmt;
+DEALLOCATE PREPARE current_version_fk_stmt;
 
 
 CREATE TABLE IF NOT EXISTS `table_meta`
@@ -174,6 +100,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_segment`
     `chunk_id`       BIGINT       NOT NULL COMMENT '片段唯一标识（雪花算法生成）',
     `text`           LONGTEXT     NOT NULL COMMENT '片段文本内容',
     `doc_id`         BIGINT       NOT NULL COMMENT '所属文档ID，关联 knowledge_document.doc_id',
+    `version_id`     BIGINT       NOT NULL COMMENT '所属物理版本 ID',
     `chunk_order`    INT          NOT NULL DEFAULT 0 COMMENT '文档内分片顺序，从0开始',
     `embedding_id`   VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'ES 中的向量文档 ID',
     `status`         VARCHAR(32)  NOT NULL DEFAULT 'INIT' COMMENT '片段状态：INIT-初始化, VECTOR_STORED-已向量化',
@@ -185,9 +112,12 @@ CREATE TABLE IF NOT EXISTS `knowledge_segment`
     UNIQUE KEY `uk_chunk_id` (`chunk_id`),
     KEY `idx_doc_id` (`doc_id`),
     KEY `idx_doc_id_order` (`doc_id`, `chunk_order`),
+    KEY `idx_doc_version_order` (`doc_id`, `version_id`, `chunk_order`),
+    KEY `idx_version_status` (`version_id`, `status`),
     KEY `idx_embedding_id` (`embedding_id`),
     KEY `idx_status` (`status`),
-    CONSTRAINT `fk_segment_doc` FOREIGN KEY (`doc_id`) REFERENCES `knowledge_document` (`doc_id`)
+    CONSTRAINT `fk_segment_document_version` FOREIGN KEY (`doc_id`, `version_id`)
+        REFERENCES `knowledge_document_version` (`doc_id`, `version_id`)
         ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
@@ -252,12 +182,7 @@ CREATE TABLE IF NOT EXISTS `chat_message`
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci COMMENT = '聊天消息表';
 
--- 兼容已存在的小写枚举值：数据及字段默认值统一迁移为大写。
-UPDATE `knowledge_document`
-SET `doc_status` = UPPER(`doc_status`)
-WHERE BINARY `doc_status` <> BINARY UPPER(`doc_status`);
-ALTER TABLE `knowledge_document` ALTER COLUMN `doc_status` SET DEFAULT 'INIT';
-
+-- 小写枚举值统一为大写。
 UPDATE `table_meta`
 SET `status` = UPPER(`status`)
 WHERE BINARY `status` <> BINARY UPPER(`status`);

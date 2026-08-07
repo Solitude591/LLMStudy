@@ -22,6 +22,21 @@ public class DocumentVO {
     private LocalDateTime createdAt;
     private boolean duplicate;
 
+    /** 本次上传/当前版本的物理版本 ID。 */
+    private String versionId;
+
+    /** 本次上传/当前版本的展示版本号（从 1 开始）。 */
+    private Integer versionNo;
+
+    /** 版本内容哈希（SHA-256）。 */
+    private String contentHash;
+
+    /** 版本处理状态：UPLOADED → … → VECTOR_STORED。 */
+    private String processingStatus;
+
+    /** 版本发布状态：PREPARING / READY / PUBLISHING / PUBLISHED / ARCHIVED。 */
+    private String releaseStatus;
+
     public DocumentVO() {
     }
 
@@ -40,6 +55,11 @@ public class DocumentVO {
         this.visibility = builder.visibility;
         this.createdAt = builder.createdAt;
         this.duplicate = builder.duplicate;
+        this.versionId = builder.versionId;
+        this.versionNo = builder.versionNo;
+        this.contentHash = builder.contentHash;
+        this.processingStatus = builder.processingStatus;
+        this.releaseStatus = builder.releaseStatus;
     }
 
     public static Builder builder() {
@@ -90,6 +110,21 @@ public class DocumentVO {
     public boolean isDuplicate() { return duplicate; }
     public void setDuplicate(boolean duplicate) { this.duplicate = duplicate; }
 
+    public String getVersionId() { return versionId; }
+    public void setVersionId(String versionId) { this.versionId = versionId; }
+
+    public Integer getVersionNo() { return versionNo; }
+    public void setVersionNo(Integer versionNo) { this.versionNo = versionNo; }
+
+    public String getContentHash() { return contentHash; }
+    public void setContentHash(String contentHash) { this.contentHash = contentHash; }
+
+    public String getProcessingStatus() { return processingStatus; }
+    public void setProcessingStatus(String processingStatus) { this.processingStatus = processingStatus; }
+
+    public String getReleaseStatus() { return releaseStatus; }
+    public void setReleaseStatus(String releaseStatus) { this.releaseStatus = releaseStatus; }
+
     // ========== Builder ==========
 
     public static class Builder {
@@ -107,6 +142,11 @@ public class DocumentVO {
         private String visibility;
         private LocalDateTime createdAt;
         private boolean duplicate;
+        private String versionId;
+        private Integer versionNo;
+        private String contentHash;
+        private String processingStatus;
+        private String releaseStatus;
 
         public Builder docId(String docId) { this.docId = docId; return this; }
         public Builder docTitle(String docTitle) { this.docTitle = docTitle; return this; }
@@ -122,6 +162,11 @@ public class DocumentVO {
         public Builder visibility(String visibility) { this.visibility = visibility; return this; }
         public Builder createdAt(LocalDateTime createdAt) { this.createdAt = createdAt; return this; }
         public Builder duplicate(boolean duplicate) { this.duplicate = duplicate; return this; }
+        public Builder versionId(String versionId) { this.versionId = versionId; return this; }
+        public Builder versionNo(Integer versionNo) { this.versionNo = versionNo; return this; }
+        public Builder contentHash(String contentHash) { this.contentHash = contentHash; return this; }
+        public Builder processingStatus(String processingStatus) { this.processingStatus = processingStatus; return this; }
+        public Builder releaseStatus(String releaseStatus) { this.releaseStatus = releaseStatus; return this; }
 
         public DocumentVO build() {
             return new DocumentVO(this);

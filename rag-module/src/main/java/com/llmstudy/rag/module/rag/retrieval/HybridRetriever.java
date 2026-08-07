@@ -1,9 +1,11 @@
 package com.llmstudy.rag.module.rag.retrieval;
 
+import com.llmstudy.rag.mapper.KnowledgeDocumentMapper;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
 import com.llmstudy.rag.module.rag.model.RewrittenQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -15,10 +17,22 @@ public class HybridRetriever {
     private static final Logger log = LoggerFactory.getLogger(HybridRetriever.class);
     private final Bm25Retriever bm25Retriever;
     private final KnnRetriever knnRetriever;
+    private final KnowledgeDocumentMapper documentMapper;
 
+    @Autowired
+    public HybridRetriever(Bm25Retriever bm25Retriever,
+                           KnnRetriever knnRetriever,
+                           KnowledgeDocumentMapper documentMapper) {
+        this.bm25Retriever = bm25Retriever;
+        this.knnRetriever = knnRetriever;
+        this.documentMapper = documentMapper;
+    }
+
+    /** 保留给不依赖数据库当前版本快照的单元测试和独立使用场景。 */
     public HybridRetriever(Bm25Retriever bm25Retriever, KnnRetriever knnRetriever) {
         this.bm25Retriever = bm25Retriever;
         this.knnRetriever = knnRetriever;
+        this.documentMapper = null;
     }
 
     /**
@@ -28,19 +42,29 @@ public class HybridRetriever {
      * @return 双路候选及是否发生单路降级的标记
      */
     public RetrievalResult retrieve(RewrittenQuery query) {
+        // 两个检索通道共享同一份指针快照，避免发布恰好发生在双路查询之间时混用版本。
+        List<String> currentVersionIds = documentMapper == null
+                ? null : documentMapper.findAllCurrentVersionIds();
+        if (currentVersionIds != null && currentVersionIds.isEmpty()) {
+            return new RetrievalResult(List.of(), List.of(), false);
+        }
         List<RetrievalCandidate> bm25 = List.of();
         List<RetrievalCandidate> knn = List.of();
         Exception bm25Failure = null;
         Exception knnFailure = null;
         // 两个 try 必须相互独立，否则第一通道失败会阻止第二通道完成降级。
         try {
-            bm25 = bm25Retriever.retrieve(query.originalQuestion());
+            bm25 = currentVersionIds == null
+                    ? bm25Retriever.retrieve(query.originalQuestion())
+                    : bm25Retriever.retrieve(query.originalQuestion(), currentVersionIds);
         } catch (Exception e) {
             bm25Failure = e;
             log.error("BM25 检索失败，尝试 KNN 降级", e);
         }
         try {
-            knn = knnRetriever.retrieve(query.rewrittenQuestion());
+            knn = currentVersionIds == null
+                    ? knnRetriever.retrieve(query.rewrittenQuestion())
+                    : knnRetriever.retrieve(query.rewrittenQuestion(), currentVersionIds);
         } catch (Exception e) {
             knnFailure = e;
             log.error("KNN 检索失败，尝试 BM25 降级", e);

@@ -1,11 +1,11 @@
 package com.llmstudy.rag.module.knowledge.excel;
 
 import com.llmstudy.rag.config.MinioProperties;
-import com.llmstudy.rag.entity.KnowledgeDocument;
+import com.llmstudy.rag.entity.KnowledgeDocumentVersion;
 import com.llmstudy.rag.entity.TableMeta;
 import com.llmstudy.rag.enums.DocumentStatus;
 import com.llmstudy.rag.enums.TableMetaStatus;
-import com.llmstudy.rag.mapper.KnowledgeDocumentMapper;
+import com.llmstudy.rag.mapper.KnowledgeDocumentVersionMapper;
 import com.llmstudy.rag.mapper.TableMetaMapper;
 import com.llmstudy.rag.module.knowledge.ingestion.DocumentStageAlreadyRunningException;
 import io.minio.GetObjectArgs;
@@ -42,7 +42,7 @@ public class ExcelImportService {
 
     private final MinioClient minioClient;
     private final MinioProperties minioProperties;
-    private final KnowledgeDocumentMapper documentMapper;
+    private final KnowledgeDocumentVersionMapper versionMapper;
     private final TableMetaMapper tableMetaMapper;
     private final ExcelSplitter excelSplitter;
     private final JdbcTemplate jdbcTemplate;
@@ -50,14 +50,14 @@ public class ExcelImportService {
 
     public ExcelImportService(MinioClient minioClient,
                               MinioProperties minioProperties,
-                              KnowledgeDocumentMapper documentMapper,
+                              KnowledgeDocumentVersionMapper versionMapper,
                               TableMetaMapper tableMetaMapper,
                               ExcelSplitter excelSplitter,
                               JdbcTemplate jdbcTemplate,
                               JsonMapper jsonMapper) {
         this.minioClient = minioClient;
         this.minioProperties = minioProperties;
-        this.documentMapper = documentMapper;
+        this.versionMapper = versionMapper;
         this.tableMetaMapper = tableMetaMapper;
         this.excelSplitter = excelSplitter;
         this.jdbcTemplate = jdbcTemplate;
@@ -70,22 +70,24 @@ public class ExcelImportService {
      * <p>导入前通过 CAS 抢占 importing 状态并预留表名；任一阶段失败时，
      * 按创建逆序删除物理表及本次 metadata，便于后续补偿重试。</p>
      *
-     * @param document 已上传且配置了目标基础表名的 Excel 文档
+     * @param version 已上传的 Excel 物理版本
+     * @param targetTableName 目标基础表名；Excel 尚未接回上传入口，因此暂由调用方显式提供
      */
-    public void importDocument(KnowledgeDocument document) {
-        String docId = document.getDocId();
-        if (documentMapper.compareAndSetStatus(
-                docId, DocumentStatus.IMPORTING, DocumentStatus.UPLOADED) != 1) {
+    public void importDocument(KnowledgeDocumentVersion version, String targetTableName) {
+        String docId = version.getDocId();
+        String versionId = version.getVersionId();
+        if (versionMapper.compareAndSetProcessingStatus(
+                versionId, DocumentStatus.IMPORTING, DocumentStatus.UPLOADED) != 1) {
             throw new DocumentStageAlreadyRunningException(
-                    "Excel 导入阶段已经被其他线程抢占: " + docId);
+                    "Excel 导入阶段已经被其他线程抢占: " + versionId);
         }
 
         Path localFile = null;
         List<String> createdTables = new ArrayList<>();
         boolean ownsMetadata = false;
         try {
-            String baseTableName = requireValidTableName(document.getTargetTableName());
-            localFile = downloadToTemp(document);
+            String baseTableName = requireValidTableName(targetTableName);
+            localFile = downloadToTemp(version);
 
             // 第一遍仅检查结构和数据边界，在创建任何物理表前尽早拒绝坏文件。
             List<ExcelSplitter.SheetDefinition> sheets = excelSplitter.inspect(localFile);
@@ -119,16 +121,16 @@ public class ExcelImportService {
                 }
             }
 
-            if (documentMapper.compareAndSetStatusAndClearError(
-                    docId, DocumentStatus.IMPORTED, DocumentStatus.IMPORTING) != 1) {
-                throw new IllegalStateException("Excel 导入完成后更新文档状态失败: " + docId);
+            if (versionMapper.compareAndSetProcessingStatusAndClearError(
+                    versionId, DocumentStatus.IMPORTED, DocumentStatus.IMPORTING) != 1) {
+                throw new IllegalStateException("Excel 导入完成后更新版本状态失败: " + versionId);
             }
-            log.info("Excel 导入完成: docId={}, tableCount={}, tables={}",
-                    docId, createdTables.size(), createdTables);
+            log.info("Excel 导入完成: docId={}, versionId={}, tableCount={}, tables={}",
+                    docId, versionId, createdTables.size(), createdTables);
         } catch (Exception e) {
             cleanupFailedImport(docId, createdTables, ownsMetadata);
-            documentMapper.compareAndSetStatusWithError(
-                    docId,
+            versionMapper.compareAndSetProcessingStatusWithError(
+                    versionId,
                     DocumentStatus.UPLOADED,
                     DocumentStatus.IMPORTING,
                     truncateError("导入失败: " + e.getMessage()));
@@ -155,10 +157,10 @@ public class ExcelImportService {
         return normalized;
     }
 
-    private Path downloadToTemp(KnowledgeDocument document) throws Exception {
-        String objectKey = resolveObjectKey(document);
+    private Path downloadToTemp(KnowledgeDocumentVersion version) throws Exception {
+        String objectKey = resolveObjectKey(version);
         Path tempFile = Files.createTempFile(
-                "excel-" + document.getDocId() + "-", "." + document.getFileType());
+                "excel-" + version.getVersionId() + "-", "." + version.getFileType());
         try (GetObjectResponse response = minioClient.getObject(
                 GetObjectArgs.builder()
                         .bucket(minioProperties.getBucketName())
@@ -172,13 +174,13 @@ public class ExcelImportService {
         return tempFile;
     }
 
-    private String resolveObjectKey(KnowledgeDocument document) {
-        if (document.getRawObjectKey() != null && !document.getRawObjectKey().isBlank()) {
-            return document.getRawObjectKey();
+    private String resolveObjectKey(KnowledgeDocumentVersion version) {
+        if (version.getRawObjectKey() != null && !version.getRawObjectKey().isBlank()) {
+            return version.getRawObjectKey();
         }
 
         // 兼容迁移前未保存 raw_object_key 的历史文档。
-        String docUrl = document.getDocUrl();
+        String docUrl = version.getDocUrl();
         if (docUrl == null || docUrl.isBlank()) {
             throw new IllegalArgumentException("Excel 文档缺少 MinIO 原文件地址");
         }

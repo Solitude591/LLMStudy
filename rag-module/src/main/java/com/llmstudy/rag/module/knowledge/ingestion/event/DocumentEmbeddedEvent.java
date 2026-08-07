@@ -3,19 +3,19 @@ package com.llmstudy.rag.module.knowledge.ingestion.event;
 import org.springframework.context.ApplicationEvent;
 
 /**
- * 文档向量化完成事件。
+ * 文档版本向量化完成事件。
  *
- * <p>当所有待处理的 segment 完成 embedding 并写入 Elasticsearch 后发布，
- * 标志着整个文档索引构建流程结束。</p>
+ * <p>当某版本所有待处理的 segment 完成 embedding 并写入 Elasticsearch 后发布，
+ * 标志着该版本索引构建流程结束。</p>
  *
- * <p><b>状态流转</b>：vector_stored → (流程结束，可触发通知等后续动作)</p>
+ * <p><b>状态流转</b>：vector_stored / ready → (流程结束，可触发通知等后续动作)</p>
  */
 public class DocumentEmbeddedEvent extends ApplicationEvent {
 
     /**
-     * 文档业务 ID。
+     * 物理版本 ID。
      */
-    private final String docId;
+    private final String versionId;
 
     /**
      * 本次向量化的 segment 数量。
@@ -23,25 +23,25 @@ public class DocumentEmbeddedEvent extends ApplicationEvent {
     private final int embeddedCount;
 
     /**
-     * 构造文档向量化完成事件。
+     * 构造文档版本向量化完成事件。
      *
-     * @param source 事件源，通常是发布事件的 Service
-     * @param docId 文档业务 ID
+     * @param source        事件源，通常是发布事件的 Service
+     * @param versionId     物理版本 ID
      * @param embeddedCount 向量化的 segment 数量
      */
-    public DocumentEmbeddedEvent(Object source, String docId, int embeddedCount) {
+    public DocumentEmbeddedEvent(Object source, String versionId, int embeddedCount) {
         super(source);
-        this.docId = docId;
+        this.versionId = versionId;
         this.embeddedCount = embeddedCount;
     }
 
     /**
-     * 获取文档业务 ID。
+     * 获取物理版本 ID。
      *
-     * @return 文档 ID
+     * @return 版本 ID
      */
-    public String getDocId() {
-        return docId;
+    public String getVersionId() {
+        return versionId;
     }
 
     /**

@@ -69,11 +69,7 @@ class AuthServiceTest {
             LoginResponse response = service.login(" alice ", "ChangeMe123!");
 
             saToken.verify(() -> StpUtil.login("user-alice"));
-            assertEquals("Authorization", response.tokenName());
-            assertEquals("Bearer", response.tokenType());
-            assertEquals("token-123", response.tokenValue());
-            assertEquals(86_400, response.expiresInSeconds());
-            assertEquals("user-alice", response.user().userId());
+            assertEquals("token-123", response.token());
         }
     }
 

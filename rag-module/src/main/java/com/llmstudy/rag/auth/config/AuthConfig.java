@@ -3,10 +3,14 @@ package com.llmstudy.rag.auth.config;
 import cn.dev33.satoken.interceptor.SaInterceptor;
 import cn.dev33.satoken.router.SaRouter;
 import cn.dev33.satoken.stp.StpUtil;
+import jakarta.servlet.DispatcherType;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -28,14 +32,28 @@ public class AuthConfig implements WebMvcConfigurer {
 
     /**
      * 注册全局 Sa-Token 拦截器，并启用控制器上的鉴权注解处理。
+     *
+     * <p>SSE / {@code Flux} 会在完成时触发 {@link DispatcherType#ASYNC} 二次分发。
+     * Sa-Token 默认 Filter 不会给异步线程注入上下文，若拦截器在 ASYNC 阶段再次调用
+     * {@link StpUtil#checkLogin()}，就会抛出「SaTokenContext 上下文尚未初始化」。
+     * 登录校验已在 {@link DispatcherType#REQUEST} 阶段完成，ASYNC 直接放行即可。</p>
      */
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        // 先排除登录页和静态资源，再对剩余路径统一执行登录检查。
-        registry.addInterceptor(new SaInterceptor(handler -> SaRouter.match("/**")
-                        .notMatch(PUBLIC_PATHS)
-                        .check(route -> StpUtil.checkLogin())))
-                .addPathPatterns("/**");
+        SaInterceptor saInterceptor = new SaInterceptor(handler -> SaRouter.match("/**")
+                .notMatch(PUBLIC_PATHS)
+                .check(route -> StpUtil.checkLogin()));
+
+        registry.addInterceptor(new HandlerInterceptor() {
+            @Override
+            public boolean preHandle(HttpServletRequest request, HttpServletResponse response,
+                                     Object handler) throws Exception {
+                if (request.getDispatcherType() == DispatcherType.ASYNC) {
+                    return true;
+                }
+                return saInterceptor.preHandle(request, response, handler);
+            }
+        }).addPathPatterns("/**");
     }
 
     /**

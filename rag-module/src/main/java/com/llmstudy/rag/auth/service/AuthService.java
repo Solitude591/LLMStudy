@@ -2,7 +2,6 @@ package com.llmstudy.rag.auth.service;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.llmstudy.rag.auth.authorization.AuthenticationException;
-import com.llmstudy.rag.auth.dto.CurrentUserResponse;
 import com.llmstudy.rag.auth.dto.LoginResponse;
 import com.llmstudy.rag.auth.entity.AuthUser;
 import com.llmstudy.rag.auth.mapper.AuthUserMapper;
@@ -17,9 +16,6 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class AuthService {
-
-    /** 与 application.yml 中 Sa-Token timeout 保持一致，用于返回页面展示。 */
-    private static final long TOKEN_TIMEOUT_SECONDS = 24 * 60 * 60;
 
     private final AuthUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
@@ -36,7 +32,7 @@ public class AuthService {
     /**
      * 校验用户名和密码并创建登录态。
      *
-     * @return Bearer Token 与当前用户资料
+     * @return 登录令牌
      * @throws AuthenticationException 用户不存在、密码错误或账号被停用时抛出
      */
     public LoginResponse login(String username, String password) {
@@ -51,8 +47,7 @@ public class AuthService {
         }
         // Sa-Token DAO 使用 RedisTemplate；写入失败会向上抛出并由异常处理器返回 503。
         StpUtil.login(user.getUserId());
-        return new LoginResponse("Authorization", "Bearer", StpUtil.getTokenValue(),
-                TOKEN_TIMEOUT_SECONDS, CurrentUserResponse.from(user));
+        return new LoginResponse(StpUtil.getTokenValue());
     }
 
     /** 删除当前 Token 对应的 Redis 登录态。 */

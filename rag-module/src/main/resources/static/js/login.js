@@ -25,7 +25,7 @@
             if (!response.ok || body.code !== 0) {
                 throw new Error(body.message || "登录失败");
             }
-            RagAuth.saveToken(body.data.tokenValue);
+            RagAuth.saveToken(body.data.token);
             const next = new URLSearchParams(location.search).get("next");
             // 只接受站内绝对路径，拒绝 //example.com 形式的协议相对开放重定向。
             const safeNext = next && next.startsWith("/") && !next.startsWith("//")

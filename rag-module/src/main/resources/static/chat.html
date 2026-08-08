@@ -3,207 +3,137 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="用于管理知识文档版本并测试 RAG Module 对话接口的工作台">
-    <title>RAG Studio · 知识问答工作台</title>
-    <link rel="stylesheet" href="css/chat.css?v=20260807-2">
+    <meta name="description" content="RAG 知识问答工作台">
+    <title>RAG Studio</title>
+    <link rel="stylesheet" href="css/chat.css">
 </head>
 <body>
-<!-- 页面由会话侧栏、对话主区域和知识库版本面板组成。 -->
-<div class="chat-app">
+<div class="app">
+    <!-- 左侧会话栏 -->
     <aside id="sidebar" class="sidebar" aria-label="会话列表">
-        <div class="brand-row">
-            <div class="brand-mark" aria-hidden="true">
-                <svg viewBox="0 0 24 24" role="img">
-                    <path d="M7 6.5h7.2a3.3 3.3 0 0 1 0 6.6H7m5.3 0 4.2 4.4M7 4v16"/>
-                </svg>
-            </div>
-            <div>
-                <strong>RAG Studio</strong>
-                <span>Knowledge workspace</span>
+        <div class="sidebar-header">
+            <div class="brand">
+                <div class="brand-mark" aria-hidden="true">R</div>
+                <span class="brand-name">RAG Studio</span>
             </div>
             <button id="closeSidebarButton" class="icon-button mobile-only" type="button"
                     aria-label="关闭会话栏">×</button>
         </div>
 
         <button id="newChatButton" class="new-chat-button" type="button">
-            <span class="new-chat-icon" aria-hidden="true">＋</span>
+            <span aria-hidden="true">+</span>
             新建对话
-            <span class="new-chat-shortcut" aria-hidden="true">N</span>
         </button>
 
-        <label class="session-search">
-            <span class="visually-hidden">搜索会话</span>
-            <span aria-hidden="true">⌕</span>
-            <input id="sessionSearchInput" type="search" placeholder="搜索数据库会话" autocomplete="off">
-        </label>
+        <div class="session-search">
+            <input id="sessionSearchInput" type="search" placeholder="搜索会话" autocomplete="off">
+        </div>
 
-        <div class="session-heading">
+        <div class="session-list-header">
             <span>最近会话</span>
             <span id="sessionCount">0</span>
         </div>
 
-        <!-- 会话列表和历史消息均从 MySQL 实时读取。 -->
         <nav id="sessionList" class="session-list" aria-label="最近会话"></nav>
 
-        <div class="sidebar-settings">
-            <div class="settings-title">
-                <span>测试设置</span>
-                <span id="connectionDot" class="connection-dot" aria-hidden="true"></span>
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <span id="currentUserLabel">加载中…</span>
+                <button id="logoutButton" type="button">退出</button>
             </div>
-
-            <div class="setting-field">
-                <span>当前用户</span>
-                <strong id="currentUserLabel">正在读取…</strong>
-                <button id="logoutButton" type="button">退出登录</button>
+            <div class="mode-switch" role="group" aria-label="响应模式">
+                <button class="mode-button is-active" type="button" data-mode="stream">流式</button>
+                <button class="mode-button" type="button" data-mode="sync">完整</button>
             </div>
-
-            <fieldset class="mode-field">
-                <legend>响应模式</legend>
-                <div class="mode-switch">
-                    <button class="mode-button is-active" type="button" data-mode="stream">流式</button>
-                    <button class="mode-button" type="button" data-mode="sync">完整</button>
-                </div>
-            </fieldset>
-
             <p id="endpointLabel" class="endpoint-label">POST /chat/client/stream</p>
         </div>
     </aside>
 
-    <div id="sidebarBackdrop" class="sidebar-backdrop" hidden></div>
+    <div id="sidebarBackdrop" class="backdrop" hidden></div>
 
-    <main class="conversation-panel">
-        <header class="conversation-header">
+    <!-- 主对话区 -->
+    <main class="main">
+        <header class="main-header">
             <button id="openSidebarButton" class="icon-button mobile-only" type="button"
                     aria-label="打开会话栏">☰</button>
-
-            <div class="conversation-identity">
+            <div class="header-title">
                 <h1 id="conversationTitle">新对话</h1>
                 <button id="conversationIdButton" class="conversation-id" type="button"
-                        title="点击复制会话 ID" disabled>
-                    尚未创建会话
-                </button>
+                        title="点击复制会话 ID" disabled>未创建</button>
             </div>
-
             <div class="header-actions">
-                <button id="openKnowledgeButton" class="knowledge-trigger" type="button"
+                <button id="openKnowledgeButton" class="header-button" type="button"
                         aria-controls="knowledgePanel" aria-expanded="false">
-                    <span>知识库</span>
-                    <span id="knowledgeHeaderCount" class="knowledge-trigger-count">0</span>
+                    知识库 <span id="knowledgeHeaderCount" class="badge">0</span>
                 </button>
-                <div class="rag-mode-badge" title="自动识别意图并按需进入 RAG 流程">
-                    <span class="rag-mode-icon" aria-hidden="true">✦</span>
-                    <span>RAG 智能路由</span>
-                </div>
-                <div class="header-status">
-                    <span id="requestStatus" class="status-label">准备就绪</span>
-                    <span class="status-orb" aria-hidden="true"></span>
-                </div>
+                <span id="requestStatus" class="status-text">就绪</span>
+                <span id="connectionDot" class="connection-dot" aria-hidden="true"></span>
             </div>
         </header>
 
-        <!-- 消息区域使用 aria-live，让辅助技术可以感知新回复。 -->
         <section id="messageViewport" class="message-viewport" aria-live="polite">
             <div id="messageList" class="message-list"></div>
         </section>
 
         <section class="composer-section" aria-label="发送消息">
             <div id="errorBanner" class="error-banner" role="alert" hidden></div>
-
             <form id="composerForm" class="composer-form">
-                <div class="composer-context" aria-hidden="true">
-                    <span class="composer-context-icon">✦</span>
-                    <span>智能路由 · 知识库增强</span>
-                    <span class="composer-context-status">已就绪</span>
-                </div>
                 <textarea id="messageInput" rows="1" maxlength="12000"
                           placeholder="输入问题，Enter 发送，Shift + Enter 换行"
                           aria-label="聊天消息"></textarea>
-
-                <div class="composer-actions">
+                <div class="composer-footer">
                     <span id="characterCount" class="character-count">0 / 12000</span>
                     <button id="stopButton" class="stop-button" type="button" hidden>停止</button>
-                    <button id="sendButton" class="send-button" type="submit" aria-label="发送消息">
-                        <span>发送</span>
-                        <span aria-hidden="true">↗</span>
-                    </button>
+                    <button id="sendButton" class="send-button" type="submit">发送</button>
                 </div>
             </form>
-
-            <p class="composer-hint">
-                <span>回答可能存在误差，请结合原始资料判断</span>
-                <span aria-hidden="true">·</span>
-                <span>会话落库 MySQL</span>
-            </p>
+            <p class="composer-hint">回答可能存在误差，请结合原始资料判断</p>
         </section>
     </main>
 
-    <div id="knowledgeBackdrop" class="knowledge-backdrop" hidden></div>
-
-    <aside id="knowledgePanel" class="knowledge-panel" aria-label="知识库版本管理">
-        <header class="knowledge-panel-header">
-            <div>
-                <p class="knowledge-eyebrow">KNOWLEDGE CONTROL</p>
-                <h2>知识库</h2>
-                <p>发布中的版本决定线上检索内容</p>
-            </div>
-            <button id="closeKnowledgeButton" class="knowledge-close-button" type="button"
-                    aria-label="关闭知识库面板">关闭</button>
+    <!-- 知识库面板（默认隐藏） -->
+    <div id="knowledgeBackdrop" class="backdrop" hidden></div>
+    <aside id="knowledgePanel" class="knowledge-panel" aria-label="知识库管理">
+        <header class="panel-header">
+            <h2>知识库</h2>
+            <button id="closeKnowledgeButton" class="icon-button" type="button"
+                    aria-label="关闭知识库面板">×</button>
         </header>
 
-        <div class="knowledge-actions">
-            <button id="uploadDocumentButton" class="knowledge-primary-button" type="button">
-                上传新文档
-            </button>
-            <form id="attachDocumentForm" class="attach-document-form">
-                <label for="attachDocumentId">关联已有文档</label>
-                <div>
-                    <input id="attachDocumentId" type="text" maxlength="64"
-                           placeholder="输入 docId" autocomplete="off">
-                    <button type="submit">关联</button>
-                </div>
+        <div class="panel-actions">
+            <button id="uploadDocumentButton" class="primary-button" type="button">上传文档</button>
+            <form id="attachDocumentForm" class="attach-form">
+                <input id="attachDocumentId" type="text" maxlength="64"
+                       placeholder="输入 docId 关联" autocomplete="off">
+                <button type="submit">关联</button>
             </form>
         </div>
 
-        <div class="knowledge-overview" aria-label="知识库状态概览">
-            <div>
-                <strong id="onlineDocumentCount">0</strong>
-                <span>已上线</span>
-            </div>
-            <div>
-                <strong id="processingDocumentCount">0</strong>
-                <span>处理中</span>
-            </div>
-            <div>
-                <strong id="trackedDocumentCount">0</strong>
-                <span>已关联</span>
-            </div>
+        <div class="panel-stats">
+            <div><strong id="onlineDocumentCount">0</strong><span>已上线</span></div>
+            <div><strong id="processingDocumentCount">0</strong><span>处理中</span></div>
+            <div><strong id="trackedDocumentCount">0</strong><span>已关联</span></div>
         </div>
 
-        <div id="knowledgeError" class="knowledge-error" role="alert" hidden></div>
+        <div id="knowledgeError" class="panel-error" role="alert" hidden></div>
 
-        <label class="document-search">
-            <span class="visually-hidden">搜索知识库文档</span>
-            <input id="documentSearchInput" type="search" placeholder="搜索标题或 docId" autocomplete="off">
-        </label>
+        <input id="documentSearchInput" class="panel-search" type="search"
+               placeholder="搜索文档" autocomplete="off">
 
         <div id="documentList" class="document-list" aria-live="polite"></div>
 
-        <footer class="knowledge-panel-footer">
-            文档列表暂存于当前浏览器；版本与发布状态实时读取服务端。
-        </footer>
+        <footer class="panel-footer">版本与发布状态实时读取服务端</footer>
     </aside>
 </div>
 
+<!-- 文档上传弹窗 -->
 <dialog id="documentDialog" class="document-dialog" aria-labelledby="documentDialogTitle">
     <form id="documentUploadForm" method="dialog" novalidate>
-        <header class="document-dialog-header">
-            <div>
-                <p id="documentDialogEyebrow">NEW DOCUMENT</p>
-                <h2 id="documentDialogTitle">上传新文档</h2>
-                <p id="documentDialogDescription">创建逻辑文档并生成第一个物理版本。</p>
-            </div>
-            <button id="closeDocumentDialogButton" class="dialog-close-button" type="button"
-                    aria-label="关闭上传窗口">关闭</button>
+        <header class="dialog-header">
+            <h2 id="documentDialogTitle">上传新文档</h2>
+            <p id="documentDialogDescription">创建逻辑文档并生成第一个物理版本</p>
+            <button id="closeDocumentDialogButton" class="icon-button" type="button"
+                    aria-label="关闭">×</button>
         </header>
 
         <div id="versionTarget" class="version-target" hidden>
@@ -212,41 +142,39 @@
             <code id="versionTargetId"></code>
         </div>
 
-        <label id="documentTitleField" class="document-form-field">
+        <label id="documentTitleField" class="form-field">
             <span>文档标题 <small>可选</small></span>
             <input id="documentTitleInput" name="docTitle" type="text" maxlength="255"
                    placeholder="不填写时使用文件名" autocomplete="off">
         </label>
 
-        <div class="document-form-row">
-            <label id="documentVisibilityField" class="document-form-field">
-                <span>可见范围</span>
-                <select id="documentVisibilityInput" name="visibility">
-                    <option value="PRIVATE">私有</option>
-                    <option value="ORGANIZATION">组织</option>
-                    <option value="PUBLIC">公开</option>
-                </select>
-            </label>
-        </div>
+        <label id="documentVisibilityField" class="form-field">
+            <span>可见范围</span>
+            <select id="documentVisibilityInput" name="visibility">
+                <option value="PRIVATE">私有</option>
+                <option value="ORGANIZATION">组织</option>
+                <option value="PUBLIC">公开</option>
+            </select>
+        </label>
 
-        <label id="changeSummaryField" class="document-form-field" hidden>
+        <label id="changeSummaryField" class="form-field" hidden>
             <span>版本说明 <small>可选</small></span>
             <textarea id="changeSummaryInput" name="changeSummary" rows="3" maxlength="500"
                       placeholder="例如：更新产品参数与常见问题"></textarea>
         </label>
 
-        <label id="documentDropzone" class="document-dropzone" for="documentFileInput">
+        <label id="documentDropzone" class="dropzone" for="documentFileInput">
             <input id="documentFileInput" name="file" type="file" accept=".pdf,.doc,.docx" required>
             <strong id="documentFileLabel">选择 PDF、DOC 或 DOCX 文件</strong>
             <span id="documentFileHint">点击选择，或将文件拖放到此处</span>
         </label>
 
-        <p class="visibility-note">组织文档仅同组织成员可读，公开文档对所有已登录用户可读。</p>
-        <div id="documentFormError" class="document-form-error" role="alert" hidden></div>
+        <p class="visibility-note">组织文档仅同组织成员可读，公开文档对所有已登录用户可读</p>
+        <div id="documentFormError" class="form-error" role="alert" hidden></div>
 
-        <footer class="document-dialog-actions">
-            <button id="cancelDocumentDialogButton" class="dialog-secondary-button" type="button">取消</button>
-            <button id="submitDocumentButton" class="dialog-primary-button" type="submit">开始上传</button>
+        <footer class="dialog-actions">
+            <button id="cancelDocumentDialogButton" class="secondary-button" type="button">取消</button>
+            <button id="submitDocumentButton" class="primary-button" type="submit">开始上传</button>
         </footer>
     </form>
 </dialog>
@@ -254,6 +182,6 @@
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
 <script src="js/auth.js" defer></script>
-<script src="js/chat.js?v=20260808-auth" defer></script>
+<script src="js/chat.js" defer></script>
 </body>
 </html>

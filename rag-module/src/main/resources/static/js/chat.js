@@ -28,13 +28,12 @@
         connectionDot: document.querySelector("#connectionDot"),
         conversationTitle: document.querySelector("#conversationTitle"),
         conversationIdButton: document.querySelector("#conversationIdButton"),
-        headerStatus: document.querySelector(".header-status"),
+        headerStatus: document.querySelector(".header-actions"),
         requestStatus: document.querySelector("#requestStatus"),
         messageViewport: document.querySelector("#messageViewport"),
         messageList: document.querySelector("#messageList"),
         composerForm: document.querySelector("#composerForm"),
         messageInput: document.querySelector("#messageInput"),
-        composerContextStatus: document.querySelector(".composer-context-status"),
         characterCount: document.querySelector("#characterCount"),
         sendButton: document.querySelector("#sendButton"),
         stopButton: document.querySelector("#stopButton"),
@@ -55,7 +54,6 @@
         documentList: document.querySelector("#documentList"),
         documentDialog: document.querySelector("#documentDialog"),
         documentUploadForm: document.querySelector("#documentUploadForm"),
-        documentDialogEyebrow: document.querySelector("#documentDialogEyebrow"),
         documentDialogTitle: document.querySelector("#documentDialogTitle"),
         documentDialogDescription: document.querySelector("#documentDialogDescription"),
         closeDocumentDialogButton: document.querySelector("#closeDocumentDialogButton"),
@@ -334,52 +332,26 @@
         wrapper.className = "welcome-state";
         const card = document.createElement("div");
         card.className = "welcome-card";
-        const kicker = document.createElement("p");
-        kicker.className = "welcome-kicker";
-        const liveDot = document.createElement("span");
-        liveDot.className = "welcome-live-dot";
-        liveDot.setAttribute("aria-hidden", "true");
-        const kickerText = document.createElement("span");
-        kickerText.textContent = "LIVE RAG WORKSPACE";
-        kicker.append(liveDot, kickerText);
         const title = document.createElement("h2");
-        title.textContent = "把知识库，变成答案。";
+        title.textContent = "开始提问";
         const description = document.createElement("p");
-        description.textContent = "在知识库中上传并发布文档版本，再通过对话验证完整 RAG 链路。";
-
-        const pipeline = document.createElement("div");
-        pipeline.className = "pipeline-strip";
-        [["01", "Query Rewrite"], ["02", "Hybrid Retrieval"],
-            ["03", "BGE Rerank"], ["04", "Streaming Answer"]]
-            .forEach(([step, label]) => {
-                const item = document.createElement("span");
-                item.className = "pipeline-item";
-                const number = document.createElement("b");
-                number.textContent = step;
-                const copy = document.createElement("span");
-                copy.textContent = label;
-                item.append(number, copy);
-                pipeline.append(item);
-            });
+        description.textContent = "在右侧知识库上传文档并发布版本后，即可基于文档内容进行问答。";
 
         const suggestions = document.createElement("div");
         suggestions.className = "suggestion-grid";
         [
-            { icon: "⌘", label: "U-Net 结构", text: "U-Net 的收缩路径和扩张路径分别起什么作用？跳跃连接是如何帮助精确定位的？" },
-            { icon: "≋", label: "方法对比", text: "对比 U-Net、nnU-Net、UNETR 和 MedSAM 的核心设计目标。" },
-            { icon: "✦", label: "MedSAM 实验", text: "MedSAM 使用了哪些医学图像模态进行训练？论文如何证明它的泛化能力？" }
+            { label: "U-Net 结构", text: "U-Net 的收缩路径和扩张路径分别起什么作用？跳跃连接是如何帮助精确定位的？" },
+            { label: "方法对比", text: "对比 U-Net、nnU-Net、UNETR 和 MedSAM 的核心设计目标。" },
+            { label: "MedSAM 实验", text: "MedSAM 使用了哪些医学图像模态进行训练？论文如何证明它的泛化能力？" }
         ].forEach(suggestion => {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "suggestion-button";
-            const icon = document.createElement("span");
-            icon.className = "suggestion-icon";
-            icon.textContent = suggestion.icon;
             const label = document.createElement("strong");
             label.textContent = suggestion.label;
             const text = document.createElement("span");
             text.textContent = suggestion.text;
-            button.append(icon, label, text);
+            button.append(label, text);
             button.addEventListener("click", () => {
                 elements.messageInput.value = suggestion.text;
                 resizeComposer();
@@ -388,7 +360,7 @@
             suggestions.append(button);
         });
 
-        card.append(kicker, title, description, pipeline, suggestions);
+        card.append(title, description, suggestions);
         wrapper.append(card);
         elements.messageList.append(wrapper);
     }
@@ -399,13 +371,13 @@
         row.dataset.localMessageId = message.localId;
         const avatar = document.createElement("div");
         avatar.className = "message-avatar";
-        avatar.textContent = message.role === "user" ? "你" : "AI";
+        avatar.textContent = message.role === "user" ? "你" : "R";
         avatar.setAttribute("aria-hidden", "true");
         const body = document.createElement("div");
         body.className = "message-body";
         const author = document.createElement("div");
         author.className = "message-author";
-        author.textContent = message.role === "user" ? "你" : "RAG 助手";
+        author.textContent = message.role === "user" ? "你" : "RAG Studio";
         const time = document.createElement("span");
         time.className = "message-time";
         time.textContent = messageTime(message.createdAt);
@@ -826,7 +798,6 @@
         elements.documentTitleField.hidden = mode === "version";
         elements.documentVisibilityField.hidden = mode === "version";
         elements.changeSummaryField.hidden = mode !== "version";
-        elements.documentDialogEyebrow.textContent = mode === "version" ? "NEW SNAPSHOT" : "NEW DOCUMENT";
         elements.documentDialogTitle.textContent = mode === "version" ? "上传新版本" : "上传新文档";
         elements.documentDialogDescription.textContent = mode === "version"
             ? "新版本独立处理，发布前不会影响当前线上内容。"
@@ -984,9 +955,7 @@
 
     function openKnowledgePanel() {
         closeSidebar();
-        if (window.matchMedia("(max-width: 1220px)").matches) {
-            elements.knowledgePanel.classList.add("is-open");
-        }
+        elements.knowledgePanel.classList.add("is-open");
         syncKnowledgePanelState();
         window.setTimeout(() => elements.documentSearchInput.focus(), 80);
     }
@@ -997,10 +966,9 @@
     }
 
     function syncKnowledgePanelState() {
-        const drawer = window.matchMedia("(max-width: 1220px)").matches;
-        const open = !drawer || elements.knowledgePanel.classList.contains("is-open");
+        const open = elements.knowledgePanel.classList.contains("is-open");
         elements.openKnowledgeButton.setAttribute("aria-expanded", String(open));
-        elements.knowledgeBackdrop.hidden = !drawer || !open;
+        elements.knowledgeBackdrop.hidden = !open;
     }
 
     function renderMessages() {
@@ -1374,8 +1342,6 @@
         elements.stopButton.hidden = !busy;
         elements.modeButtons.forEach(button => button.disabled = busy);
         elements.newChatButton.disabled = busy;
-        elements.composerContextStatus.textContent = busy ? "处理中" : "已就绪";
-        elements.composerContextStatus.classList.toggle("is-busy", busy);
         if (busy) setStatus(label ?? "请求中", "busy");
     }
 
@@ -1383,7 +1349,6 @@
         elements.requestStatus.textContent = label;
         elements.headerStatus.classList.toggle("is-busy", status === "busy");
         elements.headerStatus.classList.toggle("is-error", status === "error");
-        if (status === "error") elements.composerContextStatus.textContent = "请检查服务";
     }
 
     function showError(message) {

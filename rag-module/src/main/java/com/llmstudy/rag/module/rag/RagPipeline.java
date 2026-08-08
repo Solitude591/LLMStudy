@@ -39,13 +39,15 @@ public class RagPipeline {
     /**
      * 执行一次完整 RAG 处理，空候选时仍返回改写结果，Prompt 为 null。
      *
-     * @param request 用户问题、会话上下文和意图注入策略
+     * @param request 用户问题、会话上下文、意图注入策略和入口处捕获的访问身份
      * @return 最终 Prompt、查询改写结果与结构化引用
      */
     public RagResult execute(RagRequest request) {
         // 原问题供 BM25 保留精确词面信号，改写问题供 KNN 提升语义召回。
         RewrittenQuery rewritten = queryRewriter.rewrite(request);
-        HybridRetriever.RetrievalResult retrieval = hybridRetriever.retrieve(rewritten);
+        // 权限上下文随请求显式进入检索器，确保 BM25/KNN 只查询当前用户可读版本。
+        HybridRetriever.RetrievalResult retrieval = hybridRetriever.retrieve(
+                rewritten, request.accessContext());
         // 聚合器先融合双路排名，再按配置可选重排并统一截断 Top N。
         List<RetrievalCandidate> candidates = aggregator.aggregate(rewritten, retrieval);
         // 内容注入器负责 Prompt 模板注入和结构化引用生成

@@ -31,29 +31,38 @@ public class DocumentVersionPersistenceService {
 
     /**
      * 原始文件已经成功写入 MinIO 后，创建逻辑文档和版本 1。
+     *
+     * <p>所有者、上传者、可见范围和组织均由上层根据当前身份计算完成，本方法只在
+     * 同一个数据库事务中持久化这些可信字段。</p>
      */
     @Transactional
     public void createInitialVersion(
             String docId,
             String versionId,
             String docTitle,
-            String accessibleBy,
+            String ownerUserId,
+            String visibility,
+            String organizationId,
             String contentHash,
             String fileType,
             String uploadedBy,
             String docUrl,
             String rawObjectKey) {
 
+        // 先创建稳定的逻辑文档身份；首次发布前 current_version_id 必须保持为空。
         KnowledgeDocument document = new KnowledgeDocument();
         document.setDocId(docId);
         document.setDocTitle(docTitle);
-        document.setAccessibleBy(accessibleBy);
+        document.setOwnerUserId(ownerUserId);
+        document.setVisibility(visibility);
+        document.setOrganizationId(organizationId);
         document.setCurrentVersionId(null);
 
         if (documentMapper.insert(document) != 1) {
             throw new IllegalStateException("创建逻辑文档失败: " + docId);
         }
 
+        // 版本上传者与 owner 可以不同，例如组织管理员为本组织文档上传新版本。
         KnowledgeDocumentVersion version = new KnowledgeDocumentVersion();
         version.setVersionId(versionId);
         version.setDocId(docId);
@@ -95,6 +104,7 @@ public class DocumentVersionPersistenceService {
             throw new IllegalArgumentException("文档不存在: " + docId);
         }
 
+        // 去重和版本号分配都处于逻辑文档行锁保护范围内，避免并发绕过。
         KnowledgeDocumentVersion duplicate =
                 versionMapper.findByDocIdAndContentHash(docId, contentHash);
         if (duplicate != null) {
@@ -123,6 +133,7 @@ public class DocumentVersionPersistenceService {
         return version;
     }
 
+    /** 规范化可选的版本说明，并在持久化前限制数据库字段长度。 */
     private static String normalizeChangeSummary(String changeSummary) {
         if (changeSummary == null || changeSummary.isBlank()) {
             return null;

@@ -51,11 +51,11 @@
                 <span id="connectionDot" class="connection-dot" aria-hidden="true"></span>
             </div>
 
-            <label class="setting-field">
-                <span>用户 ID</span>
-                <input id="userIdInput" type="text" value="default" maxlength="64"
-                       placeholder="default" autocomplete="off">
-            </label>
+            <div class="setting-field">
+                <span>当前用户</span>
+                <strong id="currentUserLabel">正在读取…</strong>
+                <button id="logoutButton" type="button">退出登录</button>
+            </div>
 
             <fieldset class="mode-field">
                 <legend>响应模式</legend>
@@ -219,17 +219,12 @@
         </label>
 
         <div class="document-form-row">
-            <label class="document-form-field">
-                <span>上传者</span>
-                <input id="documentUploaderInput" name="uploader" type="text" maxlength="64"
-                       required autocomplete="off">
-            </label>
             <label id="documentVisibilityField" class="document-form-field">
-                <span>可见范围 <small>预留</small></span>
+                <span>可见范围</span>
                 <select id="documentVisibilityInput" name="visibility">
-                    <option value="private">私有</option>
-                    <option value="internal">内部</option>
-                    <option value="public">公开</option>
+                    <option value="PRIVATE">私有</option>
+                    <option value="ORGANIZATION">组织</option>
+                    <option value="PUBLIC">公开</option>
                 </select>
             </label>
         </div>
@@ -246,7 +241,7 @@
             <span id="documentFileHint">点击选择，或将文件拖放到此处</span>
         </label>
 
-        <p class="visibility-note">可见范围目前只写入预留字段，本期不执行权限控制。</p>
+        <p class="visibility-note">组织文档仅同组织成员可读，公开文档对所有已登录用户可读。</p>
         <div id="documentFormError" class="document-form-error" role="alert" hidden></div>
 
         <footer class="document-dialog-actions">
@@ -258,6 +253,7 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/chat.js?v=20260807-2" defer></script>
+<script src="js/auth.js" defer></script>
+<script src="js/chat.js?v=20260808-auth" defer></script>
 </body>
 </html>

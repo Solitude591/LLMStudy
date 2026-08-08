@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG Studio · 登录</title>
+    <link rel="stylesheet" href="css/login.css">
+</head>
+<body>
+<main class="login-shell">
+    <section class="login-card">
+        <p class="eyebrow">RAG STUDIO</p>
+        <h1>登录知识工作台</h1>
+        <p class="subtitle">使用 Sa-Token 会话访问个人、组织和公开知识。</p>
+        <form id="loginForm">
+            <label>
+                <span>用户名</span>
+                <input id="username" name="username" autocomplete="username" required autofocus>
+            </label>
+            <label>
+                <span>密码</span>
+                <input id="password" name="password" type="password"
+                       autocomplete="current-password" required>
+            </label>
+            <p id="loginError" class="error" role="alert" hidden></p>
+            <button id="loginButton" type="submit">登录</button>
+        </form>
+        <p class="demo-hint">演示账号：alice / org_admin / bob / sys_admin</p>
+    </section>
+</main>
+<script src="js/auth.js"></script>
+<script src="js/login.js"></script>
+</body>
+</html>

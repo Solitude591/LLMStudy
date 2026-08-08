@@ -1,6 +1,8 @@
 package com.llmstudy.rag.module.chat;
 
 import com.llmstudy.rag.config.ChatProperties;
+import com.llmstudy.rag.auth.model.AccessContext;
+import com.llmstudy.rag.auth.model.UserRole;
 import com.llmstudy.rag.entity.ChatConversation;
 import com.llmstudy.rag.entity.ChatMessage;
 import com.llmstudy.rag.enums.MessageType;
@@ -133,6 +135,8 @@ class ChatOrchestratorTest {
         verify(ragFlow).prepare(captor.capture());
         assertEquals(recognized, captor.getValue().intent());
         assertEquals("question", captor.getValue().query());
+        assertEquals(new AccessContext("user", null, UserRole.USER),
+                captor.getValue().accessContext());
     }
 
     @Test

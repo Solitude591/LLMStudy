@@ -18,7 +18,14 @@ public class DocumentVO {
     private String docUrl;
     private String docStatus;
     private String convertedDocUrl;
+    /** 文档可见范围，用于页面展示和权限相关交互。 */
     private String visibility;
+
+    /** 文档所有者用户 ID；由服务端身份确定。 */
+    private String ownerUserId;
+
+    /** 组织可见文档所属组织 ID，其他范围为空。 */
+    private String organizationId;
     private LocalDateTime createdAt;
     private boolean duplicate;
 
@@ -53,6 +60,8 @@ public class DocumentVO {
         this.docStatus = builder.docStatus;
         this.convertedDocUrl = builder.convertedDocUrl;
         this.visibility = builder.visibility;
+        this.ownerUserId = builder.ownerUserId;
+        this.organizationId = builder.organizationId;
         this.createdAt = builder.createdAt;
         this.duplicate = builder.duplicate;
         this.versionId = builder.versionId;
@@ -103,6 +112,10 @@ public class DocumentVO {
 
     public String getVisibility() { return visibility; }
     public void setVisibility(String visibility) { this.visibility = visibility; }
+    public String getOwnerUserId() { return ownerUserId; }
+    public void setOwnerUserId(String ownerUserId) { this.ownerUserId = ownerUserId; }
+    public String getOrganizationId() { return organizationId; }
+    public void setOrganizationId(String organizationId) { this.organizationId = organizationId; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
@@ -140,6 +153,8 @@ public class DocumentVO {
         private String docStatus;
         private String convertedDocUrl;
         private String visibility;
+        private String ownerUserId;
+        private String organizationId;
         private LocalDateTime createdAt;
         private boolean duplicate;
         private String versionId;
@@ -160,6 +175,8 @@ public class DocumentVO {
         public Builder docStatus(String docStatus) { this.docStatus = docStatus; return this; }
         public Builder convertedDocUrl(String convertedDocUrl) { this.convertedDocUrl = convertedDocUrl; return this; }
         public Builder visibility(String visibility) { this.visibility = visibility; return this; }
+        public Builder ownerUserId(String ownerUserId) { this.ownerUserId = ownerUserId; return this; }
+        public Builder organizationId(String organizationId) { this.organizationId = organizationId; return this; }
         public Builder createdAt(LocalDateTime createdAt) { this.createdAt = createdAt; return this; }
         public Builder duplicate(boolean duplicate) { this.duplicate = duplicate; return this; }
         public Builder versionId(String versionId) { this.versionId = versionId; return this; }

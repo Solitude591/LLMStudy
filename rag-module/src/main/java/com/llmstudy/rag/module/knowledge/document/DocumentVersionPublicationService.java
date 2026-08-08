@@ -1,5 +1,7 @@
 package com.llmstudy.rag.module.knowledge.document;
 
+import com.llmstudy.rag.auth.authorization.DocumentAccessPolicy;
+import com.llmstudy.rag.auth.model.AccessContext;
 import com.llmstudy.rag.dto.VersionPublishResult;
 import com.llmstudy.rag.entity.KnowledgeDocument;
 import com.llmstudy.rag.entity.KnowledgeDocumentVersion;
@@ -23,20 +25,26 @@ public class DocumentVersionPublicationService {
 
     private final KnowledgeDocumentMapper documentMapper;
     private final KnowledgeDocumentVersionMapper versionMapper;
+    private final DocumentAccessPolicy accessPolicy;
 
     public DocumentVersionPublicationService(KnowledgeDocumentMapper documentMapper,
-                                             KnowledgeDocumentVersionMapper versionMapper) {
+                                             KnowledgeDocumentVersionMapper versionMapper,
+                                             DocumentAccessPolicy accessPolicy) {
         this.documentMapper = documentMapper;
         this.versionMapper = versionMapper;
+        this.accessPolicy = accessPolicy;
     }
 
     /**
      * 发布 READY 版本，或将 ARCHIVED 版本重新发布以完成回滚。
+     *
+     * @param actor 请求入口捕获的当前身份，必须具有文档写权限
      */
     @Transactional
     public VersionPublishResult publishVersion(String docId,
                                                String targetVersionId,
-                                               String expectedCurrentVersionId) {
+                                               String expectedCurrentVersionId,
+                                               AccessContext actor) {
         requireId(docId, "docId");
         requireId(targetVersionId, "versionId");
 
@@ -45,6 +53,8 @@ public class DocumentVersionPublicationService {
         if (document == null) {
             throw new IllegalArgumentException("文档不存在: " + docId);
         }
+        // 在读取版本详情和切换指针之前校验写权限，避免泄露其他组织的历史版本状态。
+        accessPolicy.requireWrite(document, actor);
 
         String currentVersionId = document.getCurrentVersionId();
         if (!Objects.equals(currentVersionId, expectedCurrentVersionId)) {

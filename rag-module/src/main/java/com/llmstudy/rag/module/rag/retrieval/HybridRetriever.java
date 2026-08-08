@@ -1,6 +1,7 @@
 package com.llmstudy.rag.module.rag.retrieval;
 
 import com.llmstudy.rag.mapper.KnowledgeDocumentMapper;
+import com.llmstudy.rag.auth.model.AccessContext;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
 import com.llmstudy.rag.module.rag.model.RewrittenQuery;
 import org.slf4j.Logger;
@@ -10,7 +11,12 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/** 独立执行 BM25 和 KNN 通道，并实现单通道故障降级。 */
+/**
+ * 独立执行 BM25 和 KNN 通道，并实现单通道故障降级。
+ *
+ * <p>受保护检索会先从 MySQL 取得当前用户可读的“已发布版本 ID 快照”，再把同一集合
+ * 同时交给两个检索通道，既避免把权限字段写入 Elasticsearch，也避免双路权限漂移。</p>
+ */
 @Component
 public class HybridRetriever {
 
@@ -28,7 +34,10 @@ public class HybridRetriever {
         this.documentMapper = documentMapper;
     }
 
-    /** 保留给不依赖数据库当前版本快照的单元测试和独立使用场景。 */
+    /**
+     * 保留给不依赖数据库当前版本快照的单元测试和独立使用场景。
+     * 生产 Spring 注入使用上方包含 {@link KnowledgeDocumentMapper} 的构造器。
+     */
     public HybridRetriever(Bm25Retriever bm25Retriever, KnnRetriever knnRetriever) {
         this.bm25Retriever = bm25Retriever;
         this.knnRetriever = knnRetriever;
@@ -42,10 +51,26 @@ public class HybridRetriever {
      * @return 双路候选及是否发生单路降级的标记
      */
     public RetrievalResult retrieve(RewrittenQuery query) {
+        return retrieve(query, null);
+    }
+
+    /**
+     * 按当前访问身份执行双路检索。
+     *
+     * @param query 原始问题和语义改写结果
+     * @param accessContext 当前请求的权限上下文；兼容测试场景时可为空
+     * @return BM25/KNN 原始候选和降级状态
+     */
+    public RetrievalResult retrieve(RewrittenQuery query, AccessContext accessContext) {
         // 两个检索通道共享同一份指针快照，避免发布恰好发生在双路查询之间时混用版本。
         List<String> currentVersionIds = documentMapper == null
-                ? null : documentMapper.findAllCurrentVersionIds();
+                ? null : accessContext == null
+                ? documentMapper.findAllCurrentVersionIds()
+                : documentMapper.findAccessibleCurrentVersionIds(
+                        accessContext.userId(), accessContext.organizationId(),
+                        accessContext.isSystemAdmin());
         if (currentVersionIds != null && currentVersionIds.isEmpty()) {
+            // 没有可读版本时直接返回空候选，避免向 ES 发出无法命中的无意义查询。
             return new RetrievalResult(List.of(), List.of(), false);
         }
         List<RetrievalCandidate> bm25 = List.of();
@@ -85,6 +110,7 @@ public class HybridRetriever {
                                   List<RetrievalCandidate> knn,
                                   boolean degraded) {
         public RetrievalResult {
+            // 固化两个通道的返回结果，防止后续融合阶段观察到列表被修改。
             bm25 = List.copyOf(bm25);
             knn = List.copyOf(knn);
         }

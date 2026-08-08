@@ -17,9 +17,6 @@ public class ChatProperties {
     /** AI 标题生成完成前，使用首次问题生成的临时标题最大字符数。 */
     private int initialTitleMaxLength = 10;
 
-    /** 登录功能接入前使用的默认用户标识。 */
-    private String defaultUserId = "default";
-
     /** Redis 历史窗口缓存 TTL（秒），会话闲置超过该时长后缓存自然淘汰。 */
     private int historyCacheTtlSeconds = 86400;
 
@@ -44,18 +41,6 @@ public class ChatProperties {
                     "rag.chat.initial-title-max-length 必须大于 0");
         }
         this.initialTitleMaxLength = initialTitleMaxLength;
-    }
-
-    public String getDefaultUserId() {
-        return defaultUserId;
-    }
-
-    public void setDefaultUserId(String defaultUserId) {
-        if (defaultUserId == null || defaultUserId.isBlank()) {
-            throw new IllegalArgumentException(
-                    "rag.chat.default-user-id 不能为空");
-        }
-        this.defaultUserId = defaultUserId.trim();
     }
 
     public int getHistoryCacheTtlSeconds() {

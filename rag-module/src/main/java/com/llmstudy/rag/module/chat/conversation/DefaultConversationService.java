@@ -2,6 +2,7 @@ package com.llmstudy.rag.module.chat.conversation;
 
 import com.llmstudy.rag.entity.ChatConversation;
 import com.llmstudy.rag.entity.ChatMessage;
+import com.llmstudy.rag.auth.authorization.ResourceAccessDeniedException;
 import com.llmstudy.rag.enums.ConversationStatus;
 import com.llmstudy.rag.enums.MessageType;
 import com.llmstudy.rag.mapper.ChatConversationMapper;
@@ -80,12 +81,15 @@ public class DefaultConversationService implements ConversationService {
     }
 
     /**
-     * 按会话业务 ID 查询会话，不存在时按接口约定返回 null。
+     * 按“会话 ID + 当前用户 ID”查询会话，不存在或不属于当前用户时返回 null。
+     * 这里不为系统管理员提供例外，聊天内容始终只允许会话所有者访问。
      */
     @Override
-    public ChatConversation getConversation(String conversationId) {
+    public ChatConversation getConversation(String conversationId, String userId) {
         requireText(conversationId, "conversationId 不能为空");
-        return chatConversationMapper.findByConversationId(conversationId);
+        requireText(userId, "userId 不能为空");
+        return chatConversationMapper.findByConversationIdAndUserId(
+                conversationId.trim(), userId.trim());
     }
 
     /**
@@ -115,9 +119,9 @@ public class DefaultConversationService implements ConversationService {
      */
     @Override
     @Transactional
-    public void deleteConversation(String conversationId) {
-        // 确认会话存在
-        requireConversation(conversationId);
+    public void deleteConversation(String conversationId, String userId) {
+        // 先按用户 ID 校验所有权，避免仅凭可猜测的 conversationId 删除他人会话。
+        requireOwnedConversation(conversationId, userId);
         // 逻辑删除
         int updated = chatConversationMapper.updateStatus(
                 conversationId, ConversationStatus.DELETED);
@@ -260,11 +264,11 @@ public class DefaultConversationService implements ConversationService {
     }
 
     /**
-     * 按创建时间正序返回会话的完整消息历史。
+     * 校验会话所有权后，按创建时间正序返回完整消息历史。
      */
     @Override
-    public List<ChatMessage> listMessages(String conversationId) {
-        requireConversation(conversationId);
+    public List<ChatMessage> listMessages(String conversationId, String userId) {
+        requireOwnedConversation(conversationId, userId);
         return chatMessageMapper.findByConversationId(conversationId);
     }
 
@@ -283,6 +287,9 @@ public class DefaultConversationService implements ConversationService {
         ChatConversation existing =
                 chatConversationMapper.findByConversationId(conversationId);
         if (existing != null) {
+            if (!userId.trim().equals(existing.getUserId())) {
+                throw new ResourceAccessDeniedException("无权访问该会话");
+            }
             return existing;
         }
 
@@ -355,6 +362,20 @@ public class DefaultConversationService implements ConversationService {
         if (conversation == null) {
             throw new IllegalArgumentException(
                     "会话不存在: " + conversationId);
+        }
+        return conversation;
+    }
+
+    /**
+     * 加载属于指定用户的会话，作为读取消息、继续聊天和删除操作的统一越权防线。
+     */
+    private ChatConversation requireOwnedConversation(String conversationId, String userId) {
+        requireText(conversationId, "conversationId 不能为空");
+        requireText(userId, "userId 不能为空");
+        ChatConversation conversation = chatConversationMapper.findByConversationIdAndUserId(
+                conversationId.trim(), userId.trim());
+        if (conversation == null) {
+            throw new ResourceAccessDeniedException("会话不存在或无权访问");
         }
         return conversation;
     }

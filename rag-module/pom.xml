@@ -23,6 +23,7 @@
         <langchain4j-elasticsearch.version>1.12.2-beta22</langchain4j-elasticsearch.version>
         <elasticsearch-java.version>8.19.10</elasticsearch-java.version>
         <langchain4j.version>1.12.2</langchain4j.version>
+        <sa-token.version>1.45.0</sa-token.version>
     </properties>
 
     <dependencies>
@@ -83,6 +84,24 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- Sa-Token：Spring Boot 4 WebMVC 集成与 Redis 会话持久化 -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-spring-boot4-starter</artifactId>
+            <version>${sa-token.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-redis-template</artifactId>
+            <version>${sa-token.version}</version>
+        </dependency>
+
+        <!-- 只使用 BCrypt，不引入 Spring Security 过滤器链。 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
         </dependency>
 
         <!-- ONNX Runtime CPU：本地 BGE ReRanker 模型推理 -->
@@ -183,7 +202,7 @@
                         测试 JVM 启动时预加载 Mockito Agent，确保 final 类/方法的 mock
                         可以稳定运行，并避免未来 JDK 完全禁止自附加后测试失败。
                     -->
-                    <argLine>-javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</argLine>
+                    <argLine>-Djava.awt.headless=true -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</argLine>
                 </configuration>
             </plugin>
         </plugins>

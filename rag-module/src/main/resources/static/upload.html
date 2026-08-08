@@ -13,6 +13,8 @@
             <p class="eyebrow">RAG MODULE</p>
             <h1>文件上传测试</h1>
             <p class="subtitle">测试 <code>POST /document/upload</code>，并查看接口原始响应。</p>
+            <p><span id="currentUserLabel">正在读取登录用户…</span>
+                <button id="logoutButton" class="secondary-button compact" type="button">退出</button></p>
         </header>
 
         <form id="uploadForm" novalidate>
@@ -31,12 +33,6 @@
 
             <div class="form-grid">
                 <label class="field">
-                    <span>上传者 <em>*</em></span>
-                    <input id="uploader" name="uploader" type="text" value="test-user" required
-                           maxlength="64" placeholder="例如：test-user">
-                </label>
-
-                <label class="field">
                     <span>文档标题</span>
                     <input id="docTitle" name="docTitle" type="text" placeholder="留空时使用原文件名">
                 </label>
@@ -44,9 +40,9 @@
                 <label class="field">
                     <span>可见范围</span>
                     <select id="visibility" name="visibility">
-                        <option value="private">private</option>
-                        <option value="internal">internal</option>
-                        <option value="public">public</option>
+                        <option value="PRIVATE">私有</option>
+                        <option value="ORGANIZATION">组织</option>
+                        <option value="PUBLIC">公开</option>
                     </select>
                 </label>
 
@@ -90,6 +86,7 @@
     </section>
 </main>
 
+<script src="js/auth.js" defer></script>
 <script src="js/upload.js" defer></script>
 </body>
 </html>

@@ -9,6 +9,8 @@
         "UPLOADED", "CONVERTING", "CONVERTED", "SPLITTING",
         "CHUNKED", "VECTORING", "VECTOR_STORED"
     ];
+    // 聊天页所有业务请求统一经过认证封装，自动附加 Bearer Token 并处理 401。
+    const authFetch = (url, options = {}) => RagAuth.fetch(url, options);
 
     const elements = {
         sidebar: document.querySelector("#sidebar"),
@@ -19,7 +21,8 @@
         sessionSearchInput: document.querySelector("#sessionSearchInput"),
         sessionList: document.querySelector("#sessionList"),
         sessionCount: document.querySelector("#sessionCount"),
-        userIdInput: document.querySelector("#userIdInput"),
+        currentUserLabel: document.querySelector("#currentUserLabel"),
+        logoutButton: document.querySelector("#logoutButton"),
         modeButtons: [...document.querySelectorAll(".mode-button")],
         endpointLabel: document.querySelector("#endpointLabel"),
         connectionDot: document.querySelector("#connectionDot"),
@@ -62,7 +65,6 @@
         versionTargetId: document.querySelector("#versionTargetId"),
         documentTitleField: document.querySelector("#documentTitleField"),
         documentTitleInput: document.querySelector("#documentTitleInput"),
-        documentUploaderInput: document.querySelector("#documentUploaderInput"),
         documentVisibilityField: document.querySelector("#documentVisibilityField"),
         documentVisibilityInput: document.querySelector("#documentVisibilityInput"),
         changeSummaryField: document.querySelector("#changeSummaryField"),
@@ -91,7 +93,8 @@
         documentBusy: false,
         busyVersionId: null,
         documentPollTimer: null,
-        toastTimer: null
+        toastTimer: null,
+        currentUser: null
     };
 
     function transientId(prefix) {
@@ -133,8 +136,7 @@
     }
 
     function conversationsEndpoint() {
-        const userId = elements.userIdInput.value.trim() || "default";
-        return apiUrl(`/chat/client/conversations?userId=${encodeURIComponent(userId)}`);
+        return apiUrl("/chat/client/conversations");
     }
 
     function conversationEndpoint(conversationId) {
@@ -206,7 +208,7 @@
         state.loading = true;
         renderSessions();
         try {
-            const response = await fetch(conversationsEndpoint(), {
+            const response = await authFetch(conversationsEndpoint(), {
                 headers: { "Accept": "application/json" }
             });
             const body = await readJsonResponse(response);
@@ -248,7 +250,8 @@
     }
 
     async function loadMessages(session) {
-        const response = await fetch(messagesEndpoint(session.conversationId), {
+        // 后端同时使用 conversationId 和 Token 中的当前用户 ID 校验会话所有权。
+        const response = await authFetch(messagesEndpoint(session.conversationId), {
             headers: { "Accept": "application/json" }
         });
         const body = await readJsonResponse(response);
@@ -453,7 +456,7 @@
                 .map(item => ({
                     docId: item.docId.trim(),
                     docTitle: item.docTitle?.trim() || "未命名文档",
-                    visibility: item.visibility || "private",
+                    visibility: item.visibility || "PRIVATE",
                     versions: [],
                     loading: true,
                     error: null
@@ -484,7 +487,7 @@
             document = {
                 docId: metadata.docId,
                 docTitle: metadata.docTitle?.trim() || "未命名文档",
-                visibility: metadata.visibility || "private",
+                visibility: metadata.visibility || "PRIVATE",
                 versions: [],
                 loading: false,
                 error: null
@@ -492,7 +495,7 @@
             state.documents.unshift(document);
         }
         document.docTitle = metadata.docTitle?.trim() || document.docTitle;
-        document.visibility = metadata.visibility || document.visibility || "private";
+        document.visibility = metadata.visibility || document.visibility || "PRIVATE";
         document.loading = false;
         document.error = null;
         if (Array.isArray(versions)) document.versions = versions;
@@ -507,8 +510,8 @@
         if (!quiet) renderKnowledge();
         try {
             const [metadataResponse, versionsResponse] = await Promise.all([
-                fetch(documentEndpoint(docId), { headers: { "Accept": "application/json" } }),
-                fetch(documentVersionsEndpoint(docId), { headers: { "Accept": "application/json" } })
+                authFetch(documentEndpoint(docId), { headers: { "Accept": "application/json" } }),
+                authFetch(documentVersionsEndpoint(docId), { headers: { "Accept": "application/json" } })
             ]);
             const [metadata, versions] = await Promise.all([
                 readJsonResponse(metadataResponse), readJsonResponse(versionsResponse)
@@ -789,7 +792,7 @@
         clearKnowledgeError();
         renderKnowledge();
         try {
-            const response = await fetch(documentPublishEndpoint(docId, version.versionId), {
+            const response = await authFetch(documentPublishEndpoint(docId, version.versionId), {
                 method: "POST",
                 headers: { "Accept": "application/json", "Content-Type": "application/json" },
                 body: JSON.stringify({ expectedCurrentVersionId: currentVersion?.versionId ?? null })
@@ -818,8 +821,7 @@
         state.documentDialogMode = mode;
         state.documentDialogTargetId = target?.docId ?? null;
         elements.documentUploadForm.reset();
-        elements.documentUploaderInput.value = elements.userIdInput.value.trim() || "default";
-        elements.documentVisibilityInput.value = "private";
+        elements.documentVisibilityInput.value = "PRIVATE";
         elements.versionTarget.hidden = mode !== "version";
         elements.documentTitleField.hidden = mode === "version";
         elements.documentVisibilityField.hidden = mode === "version";
@@ -872,7 +874,6 @@
     async function submitDocumentUpload() {
         if (state.documentBusy) return;
         const file = elements.documentFileInput.files?.[0];
-        const uploader = elements.documentUploaderInput.value.trim();
         if (!file) {
             showDocumentFormError("请选择需要上传的文档文件。");
             return;
@@ -881,12 +882,6 @@
             showDocumentFormError("当前仅支持 PDF、DOC 和 DOCX 文件。");
             return;
         }
-        if (!uploader) {
-            showDocumentFormError("请填写上传者标识。");
-            elements.documentUploaderInput.focus();
-            return;
-        }
-
         const mode = state.documentDialogMode;
         const targetId = state.documentDialogTargetId;
         if (mode === "version" && !targetId) {
@@ -895,7 +890,6 @@
         }
         const formData = new FormData();
         formData.append("file", file);
-        formData.append("uploader", uploader);
         let endpoint;
         if (mode === "version") {
             endpoint = documentVersionsEndpoint(targetId);
@@ -905,7 +899,7 @@
             endpoint = apiUrl("/document/upload");
             const title = elements.documentTitleInput.value.trim();
             if (title) formData.append("docTitle", title);
-            formData.append("visibility", elements.documentVisibilityInput.value || "private");
+            formData.append("visibility", elements.documentVisibilityInput.value || "PRIVATE");
         }
 
         state.documentBusy = true;
@@ -913,7 +907,7 @@
         elements.submitDocumentButton.disabled = true;
         elements.submitDocumentButton.textContent = "正在上传…";
         try {
-            const response = await fetch(endpoint, {
+            const response = await authFetch(endpoint, {
                 method: "POST",
                 headers: { "Accept": "application/json" },
                 body: formData
@@ -950,7 +944,7 @@
             state.documents.unshift({
                 docId,
                 docTitle: "正在读取文档…",
-                visibility: "private",
+                visibility: "PRIVATE",
                 versions: [],
                 loading: true,
                 error: null
@@ -1109,7 +1103,7 @@
         clearError();
         setStatus("正在删除会话", "busy");
         try {
-            const response = await fetch(conversationEndpoint(session.conversationId), {
+            const response = await authFetch(conversationEndpoint(session.conversationId), {
                 method: "DELETE",
                 headers: { "Accept": "application/json" }
             });
@@ -1165,7 +1159,6 @@
             return;
         }
 
-        const userId = elements.userIdInput.value.trim() || "default";
         const session = currentSession();
         const firstMessage = session.messages.length === 0;
         clearError();
@@ -1177,7 +1170,8 @@
         elements.messageInput.value = "";
         resizeComposer();
         setBusy(true, state.mode === "stream" ? "正在流式生成" : "等待完整响应");
-        const payload = { conversationId: session.conversationId, userId, query };
+        // 请求体只包含会话 ID 和问题，userId 由后端根据 Authorization Token 获取。
+        const payload = { conversationId: session.conversationId, query };
         state.abortController = new AbortController();
         let requestSucceeded = false;
 
@@ -1225,7 +1219,7 @@
     }
 
     async function sendSynchronous(payload, session, userMessage, assistantMessage) {
-        const response = await fetch(endpointFor("sync"), {
+        const response = await authFetch(endpointFor("sync"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
@@ -1242,7 +1236,7 @@
     }
 
     async function sendStreaming(payload, session, userMessage, assistantMessage) {
-        const response = await fetch(endpointFor("stream"), {
+        const response = await authFetch(endpointFor("stream"), {
             method: "POST",
             headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
             body: JSON.stringify(payload),
@@ -1290,7 +1284,7 @@
         for (let attempt = 0; attempt < TITLE_SYNC_MAX_ATTEMPTS; attempt += 1) {
             await delay(TITLE_SYNC_INTERVAL_MS);
             try {
-                const response = await fetch(conversationEndpoint(conversationId), {
+                const response = await authFetch(conversationEndpoint(conversationId), {
                     headers: { "Accept": "application/json" }
                 });
                 const body = await readJsonResponse(response);
@@ -1501,21 +1495,7 @@
         elements.modeButtons.forEach(button => {
             button.addEventListener("click", () => setMode(button.dataset.mode));
         });
-        elements.userIdInput.addEventListener("change", async () => {
-            if (state.busy || state.loading) return;
-            elements.userIdInput.value = elements.userIdInput.value.trim() || "default";
-            state.sessions = [];
-            state.activeSessionKey = null;
-            clearError();
-            try {
-                await refreshConversations();
-                setStatus("准备就绪", "ready");
-            } catch (error) {
-                elements.connectionDot.classList.add("is-error");
-                setStatus("加载失败", "error");
-                showError(error.message);
-            }
-        });
+        elements.logoutButton.addEventListener("click", () => void RagAuth.logout());
         elements.conversationIdButton.addEventListener("click", () => {
             const id = currentSession().conversationId;
             if (id) void copyText(id, "会话 ID 已复制");
@@ -1548,7 +1528,17 @@
         });
     }
 
+    /**
+     * 校验登录态后再加载会话与文档，避免未认证页面提前发起业务请求。
+     */
     async function initialize() {
+        state.currentUser = await RagAuth.requireUser();
+        elements.currentUserLabel.textContent = `${state.currentUser.displayName} · ${state.currentUser.role}`
+            + (state.currentUser.organizationName ? ` · ${state.currentUser.organizationName}` : "");
+        const organizationOption = elements.documentVisibilityInput.querySelector(
+            'option[value="ORGANIZATION"]');
+        // 没有组织归属时禁用组织可见选项，后端仍会进行同样的强制校验。
+        organizationOption.disabled = !state.currentUser.organizationId;
         loadStoredDocuments();
         bindEvents();
         setMode(state.mode);

@@ -1,5 +1,7 @@
 package com.llmstudy.rag.entity;
 
+import com.llmstudy.rag.auth.model.DocumentVisibility;
+
 import java.time.LocalDateTime;
 
 /**
@@ -19,8 +21,14 @@ public class KnowledgeDocument {
     /** 逻辑文档标题。 */
     private String docTitle;
 
-    /** 预留的可访问主体标识；当前不参与权限判定。 */
-    private String accessibleBy;
+    /** 文档所有者用户 ID，由上传入口的当前身份生成，不接受前端指定。 */
+    private String ownerUserId;
+
+    /** 可见范围数据库值：PRIVATE、ORGANIZATION 或 PUBLIC。 */
+    private String visibility;
+
+    /** 组织可见文档所属组织；其他可见范围为 null。 */
+    private String organizationId;
 
     /** 当前对外生效的物理版本 ID；尚未首次发布时为 null。 */
     private String currentVersionId;
@@ -52,12 +60,33 @@ public class KnowledgeDocument {
         this.docTitle = docTitle;
     }
 
-    public String getAccessibleBy() {
-        return accessibleBy;
+    public String getOwnerUserId() {
+        return ownerUserId;
+    }
+    public void setOwnerUserId(String ownerUserId) {
+        this.ownerUserId = ownerUserId;
+    }
+    public String getVisibility() {
+        return visibility;
+    }
+    public void setVisibility(String visibility) {
+        this.visibility = visibility;
     }
 
-    public void setAccessibleBy(String accessibleBy) {
-        this.accessibleBy = accessibleBy;
+    /** @return 将数据库字符串转换为统一的强类型可见范围 */
+    public DocumentVisibility getDocumentVisibility() {
+        return DocumentVisibility.from(visibility);
+    }
+
+    /** 使用枚举写入规范化的大写数据库值。 */
+    public void setDocumentVisibility(DocumentVisibility visibility) {
+        this.visibility = visibility.name();
+    }
+    public String getOrganizationId() {
+        return organizationId;
+    }
+    public void setOrganizationId(String organizationId) {
+        this.organizationId = organizationId;
     }
 
     public String getCurrentVersionId() {
@@ -90,7 +119,9 @@ public class KnowledgeDocument {
                 "id=" + id +
                 ", docId='" + docId + '\'' +
                 ", docTitle='" + docTitle + '\'' +
-                ", accessibleBy='" + accessibleBy + '\'' +
+                ", ownerUserId='" + ownerUserId + '\'' +
+                ", visibility='" + visibility + '\'' +
+                ", organizationId='" + organizationId + '\'' +
                 ", currentVersionId='" + currentVersionId + '\'' +
                 ", createdAt=" + createdAt +
                 ", updatedAt=" + updatedAt +

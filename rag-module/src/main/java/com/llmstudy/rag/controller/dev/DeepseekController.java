@@ -1,5 +1,6 @@
 package com.llmstudy.rag.controller.dev;
 
+import cn.dev33.satoken.annotation.SaCheckRole;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -15,6 +16,7 @@ import reactor.core.publisher.Flux;
 @RestController
 @Profile("dev")
 @RequestMapping("/chat/deepseek")
+@SaCheckRole("SYS_ADMIN")
 public class DeepseekController {
 
     private final ChatModel chatModel;

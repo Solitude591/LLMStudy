@@ -1,6 +1,8 @@
 package com.llmstudy.rag.controller;
 
-import com.llmstudy.rag.config.ChatProperties;
+import com.llmstudy.rag.auth.model.AccessContext;
+import com.llmstudy.rag.auth.service.CurrentUserProvider;
+import com.llmstudy.rag.auth.authorization.ResourceAccessDeniedException;
 import com.llmstudy.rag.dto.ChatConversationResponse;
 import com.llmstudy.rag.dto.ChatMessageResponse;
 import com.llmstudy.rag.dto.ChatRequest;
@@ -19,7 +21,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
@@ -32,16 +33,17 @@ public class ChatClientController {
 
     private final ChatOrchestrator orchestrator;
     private final ConversationService conversationService;
-    private final ChatProperties properties;
+    private final CurrentUserProvider currentUserProvider;
 
     public ChatClientController(ChatOrchestrator orchestrator,
                                 ConversationService conversationService,
-                                ChatProperties properties) {
+                                CurrentUserProvider currentUserProvider) {
         this.orchestrator = orchestrator;
         this.conversationService = conversationService;
-        this.properties = properties;
+        this.currentUserProvider = currentUserProvider;
     }
 
+    /** 同步聊天入口；命令构造阶段会捕获当前用户身份。 */
     @PostMapping("/ask")
     public ChatResponse ask(@RequestBody ChatRequest request) {
         ChatOrchestrator.ChatAnswer answer = orchestrator.ask(command(request));
@@ -50,6 +52,9 @@ public class ChatClientController {
                 answer.tokenCount(), answer.modelName());
     }
 
+    /**
+     * SSE 聊天入口。订阅和生成可能切换线程，因此必须先在调用 orchestrator 前捕获身份。
+     */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ChatStreamResponse> stream(@RequestBody ChatRequest request) {
         return orchestrator.stream(command(request)).map(ChatClientController::toResponse);
@@ -57,20 +62,19 @@ public class ChatClientController {
 
     @GetMapping("/conversations/{conversationId}")
     public ChatConversationResponse getConversation(@PathVariable String conversationId) {
-        ChatConversation conversation = conversationService.getConversation(conversationId);
+        String userId = currentUserProvider.requireCurrentUser().userId();
+        ChatConversation conversation = conversationService.getConversation(conversationId, userId);
         if (conversation == null) {
-            throw new IllegalArgumentException("会话不存在: " + conversationId);
+            throw new ResourceAccessDeniedException("会话不存在或无权访问");
         }
         return ChatConversationResponse.from(conversation);
     }
 
     /** 从 MySQL 返回指定用户的活跃会话，按最近更新时间倒序排列。 */
     @GetMapping("/conversations")
-    public List<ChatConversationResponse> listConversations(
-            @RequestParam(required = false) String userId) {
-        String effectiveUserId = userId == null || userId.isBlank()
-                ? properties.getDefaultUserId() : userId;
-        return conversationService.listConversations(effectiveUserId).stream()
+    public List<ChatConversationResponse> listConversations() {
+        String userId = currentUserProvider.requireCurrentUser().userId();
+        return conversationService.listConversations(userId).stream()
                 .map(ChatConversationResponse::from)
                 .toList();
     }
@@ -79,7 +83,8 @@ public class ChatClientController {
     @GetMapping("/conversations/{conversationId}/messages")
     public List<ChatMessageResponse> listMessages(
             @PathVariable String conversationId) {
-        return conversationService.listMessages(conversationId).stream()
+        String userId = currentUserProvider.requireCurrentUser().userId();
+        return conversationService.listMessages(conversationId, userId).stream()
                 .map(ChatMessageResponse::from)
                 .toList();
     }
@@ -88,7 +93,8 @@ public class ChatClientController {
     @DeleteMapping("/conversations/{conversationId}")
     public ResponseEntity<Void> deleteConversation(
             @PathVariable String conversationId) {
-        conversationService.deleteConversation(conversationId);
+        String userId = currentUserProvider.requireCurrentUser().userId();
+        conversationService.deleteConversation(conversationId, userId);
         return ResponseEntity.noContent().build();
     }
 
@@ -96,9 +102,9 @@ public class ChatClientController {
         if (request == null) {
             throw new IllegalArgumentException("请求体不能为空");
         }
-        String userId = request.userId() == null || request.userId().isBlank()
-                ? properties.getDefaultUserId() : request.userId();
-        return new ChatCommand(request.conversationId(), userId, request.query());
+        // 这是异步边界前唯一一次读取当前登录身份，之后只传递不可变 AccessContext。
+        AccessContext accessContext = currentUserProvider.requireAccessContext();
+        return new ChatCommand(request.conversationId(), accessContext, request.query());
     }
 
     private static ChatStreamResponse toResponse(ChatStreamEvent event) {

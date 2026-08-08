@@ -130,14 +130,16 @@ class DefaultConversationServiceTest {
     void deleteConversation_将会话标记为已删除() {
         ChatConversation conversation = new ChatConversation();
         conversation.setConversationId("conversation-1");
+        conversation.setUserId("user-1");
         conversation.setConversationStatus(ConversationStatus.ACTIVE);
-        when(conversationMapper.findByConversationId("conversation-1"))
+        when(conversationMapper.findByConversationIdAndUserId(
+                "conversation-1", "user-1"))
                 .thenReturn(conversation);
         when(conversationMapper.updateStatus(
                 "conversation-1", ConversationStatus.DELETED))
                 .thenReturn(1);
 
-        chatService.deleteConversation("conversation-1");
+        chatService.deleteConversation("conversation-1", "user-1");
 
         verify(conversationMapper).updateStatus(
                 "conversation-1", ConversationStatus.DELETED);

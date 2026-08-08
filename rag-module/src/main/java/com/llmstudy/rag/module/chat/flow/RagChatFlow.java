@@ -31,8 +31,10 @@ public class RagChatFlow implements ChatFlow {
     /** 执行 RAG Pipeline，并把改写问题和引用交回聊天编排层持久化。 */
     @Override
     public FlowPreparation prepare(ChatFlowContext context) {
+        // 将请求入口捕获的身份继续传给 RAG Pipeline；此处可能已经不在原 HTTP 线程。
         RagResult result = pipeline.execute(new RagRequest(
-                context.query(), formatHistory(context.history()), toRagIntent(context.intent())));
+                context.query(), formatHistory(context.history()), toRagIntent(context.intent()),
+                context.accessContext()));
         // 空检索结果不再请求 LLM，避免模型在无证据时自由发挥。
         return new FlowPreparation(result.prompt(),
                 result.rewrittenQuery().rewrittenQuestion(), result.references(),

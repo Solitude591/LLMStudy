@@ -23,6 +23,9 @@
     const responseMeta = document.querySelector("#responseMeta");
     const responseOutput = document.querySelector("#responseOutput");
     const queryButton = document.querySelector("#queryButton");
+    const currentUserLabel = document.querySelector("#currentUserLabel");
+    const logoutButton = document.querySelector("#logoutButton");
+    const visibilityInput = document.querySelector("#visibility");
 
     let selectedFile = null;
     let currentDocId = null;
@@ -168,8 +171,8 @@
 
         const payload = new FormData();
         payload.append("file", selectedFile, selectedFile.name);
-        payload.append("uploader", document.querySelector("#uploader").value.trim());
-        payload.append("visibility", document.querySelector("#visibility").value);
+        payload.append("visibility", visibilityInput.value);
+        // uploader、ownerUserId 和 organizationId 均不发送，由后端从当前 Token 身份推导。
 
         const docTitle = document.querySelector("#docTitle").value.trim();
         if (docTitle) payload.append("docTitle", docTitle);
@@ -187,6 +190,9 @@
         setProgress(0, "正在上传...");
 
         xhr.open("POST", endpointInput.value.trim());
+        // 上传进度依赖 XMLHttpRequest，因此在这里显式注入与 RagAuth.fetch 相同的 Token。
+        xhr.setRequestHeader("Authorization", `Bearer ${RagAuth.token()}`);
+        xhr.setRequestHeader("Accept", "application/json");
         xhr.upload.addEventListener("progress", (progressEvent) => {
             if (!progressEvent.lengthComputable) return;
             const percent = Math.min(99, Math.round(progressEvent.loaded / progressEvent.total * 100));
@@ -218,7 +224,8 @@
         queryButton.disabled = true;
         const startedAt = performance.now();
         try {
-            const response = await fetch(documentUrl(endpointInput.value.trim(), currentDocId));
+            const response = await RagAuth.fetch(
+                documentUrl(endpointInput.value.trim(), currentDocId));
             const body = await response.text();
             displayResponse(response.status, body, Math.round(performance.now() - startedAt));
         } catch (error) {
@@ -244,4 +251,24 @@
         responseOutput.textContent = "等待上传...";
         queryButton.disabled = true;
     });
+
+    logoutButton.addEventListener("click", () => void RagAuth.logout());
+
+    /**
+     * 页面加载时校验 Token、展示当前账号，并按用户组织状态限制可见范围选项。
+     */
+    async function initializeAuth() {
+        const user = await RagAuth.requireUser();
+        currentUserLabel.textContent = `${user.displayName} · ${user.role}`
+            + (user.organizationName ? ` · ${user.organizationName}` : "");
+        const organizationOption = visibilityInput.querySelector(
+            'option[value="ORGANIZATION"]');
+        // 无组织用户不能创建 ORGANIZATION 文档，组织 ID 也不会由页面伪造提交。
+        organizationOption.disabled = !user.organizationId;
+        if (!user.organizationId && visibilityInput.value === "ORGANIZATION") {
+            visibilityInput.value = "PRIVATE";
+        }
+    }
+
+    void initializeAuth();
 })();

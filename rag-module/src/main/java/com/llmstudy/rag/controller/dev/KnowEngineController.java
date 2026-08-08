@@ -1,5 +1,6 @@
 package com.llmstudy.rag.controller.dev;
 
+import cn.dev33.satoken.annotation.SaCheckRole;
 import com.llmstudy.rag.config.ElasticsearchProperties;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
@@ -29,6 +30,7 @@ import static dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metad
 @RestController
 @Profile("dev")
 @RequestMapping("/knowengine")
+@SaCheckRole("SYS_ADMIN")
 public class KnowEngineController {
 
     private static final String FOOTBALL_TEST_ID = "know-engine-test-football";

@@ -4,10 +4,10 @@ import com.alibaba.excel.EasyExcel;
 import com.alibaba.excel.ExcelWriter;
 import com.alibaba.excel.write.metadata.WriteSheet;
 import com.llmstudy.rag.config.MinioProperties;
-import com.llmstudy.rag.entity.KnowledgeDocument;
+import com.llmstudy.rag.entity.KnowledgeDocumentVersion;
 import com.llmstudy.rag.entity.TableMeta;
 import com.llmstudy.rag.enums.DocumentStatus;
-import com.llmstudy.rag.mapper.KnowledgeDocumentMapper;
+import com.llmstudy.rag.mapper.KnowledgeDocumentVersionMapper;
 import com.llmstudy.rag.mapper.TableMetaMapper;
 import io.minio.GetObjectResponse;
 import io.minio.MinioClient;
@@ -69,12 +69,12 @@ class ExcelImportServiceIntegrationTest {
     @Test
     void importDocument_每个Sheet建表并批量写入() throws Exception {
         byte[] workbook = buildWorkbook();
-        KnowledgeDocumentMapper documentMapper = mock(KnowledgeDocumentMapper.class);
+        KnowledgeDocumentVersionMapper versionMapper = mock(KnowledgeDocumentVersionMapper.class);
         TableMetaMapper tableMetaMapper = mock(TableMetaMapper.class);
         MinioClient minioClient = mock(MinioClient.class);
         JdbcTemplate jdbc = jdbcTemplate();
 
-        stubSuccessfulLifecycle(documentMapper);
+        stubSuccessfulLifecycle(versionMapper);
         when(tableMetaMapper.findByDocId("1001")).thenReturn(List.of());
         when(tableMetaMapper.insert(any())).thenReturn(1);
         when(tableMetaMapper.markImported(eq("1001"), anyInt(), anyLong()))
@@ -85,13 +85,13 @@ class ExcelImportServiceIntegrationTest {
         ExcelImportService service = new ExcelImportService(
                 minioClient,
                 minioProperties(),
-                documentMapper,
+                versionMapper,
                 tableMetaMapper,
                 new ExcelSplitter(),
                 jdbc,
                 JsonMapper.builder().build());
 
-        service.importDocument(excelDocument());
+        service.importDocument(excelVersion(), baseTableName);
 
         assertEquals(2, jdbc.queryForObject(
                 "SELECT COUNT(*) FROM `" + baseTableName + "`", Integer.class));
@@ -118,8 +118,8 @@ class ExcelImportServiceIntegrationTest {
         assertEquals(List.of(baseTableName, baseTableName + "_2"),
                 metaCaptor.getAllValues().stream().map(TableMeta::getTableName).toList());
         assertTrue(metaCaptor.getAllValues().getFirst().getColumnMapping().contains("姓名"));
-        verify(documentMapper).compareAndSetStatusAndClearError(
-                "1001", DocumentStatus.IMPORTED, DocumentStatus.IMPORTING);
+        verify(versionMapper).compareAndSetProcessingStatusAndClearError(
+                "version-1001", DocumentStatus.IMPORTED, DocumentStatus.IMPORTING);
         verify(tableMetaMapper).markImported("1001", 1, 2);
         verify(tableMetaMapper).markImported("1001", 2, 1);
     }
@@ -130,10 +130,10 @@ class ExcelImportServiceIntegrationTest {
         jdbc.execute("CREATE TABLE `" + baseTableName + "` (`value` VARCHAR(255))");
         jdbc.update("INSERT INTO `" + baseTableName + "` (`value`) VALUES ('keep-me')");
 
-        KnowledgeDocumentMapper documentMapper = mock(KnowledgeDocumentMapper.class);
+        KnowledgeDocumentVersionMapper versionMapper = mock(KnowledgeDocumentVersionMapper.class);
         TableMetaMapper tableMetaMapper = mock(TableMetaMapper.class);
         MinioClient minioClient = mock(MinioClient.class);
-        stubSuccessfulLifecycle(documentMapper);
+        stubSuccessfulLifecycle(versionMapper);
         when(tableMetaMapper.findByDocId("1001")).thenReturn(List.of());
         when(tableMetaMapper.insert(any())).thenReturn(1);
         when(minioClient.getObject(any())).thenAnswer(invocation ->
@@ -142,7 +142,7 @@ class ExcelImportServiceIntegrationTest {
         ExcelImportService service = new ExcelImportService(
                 minioClient,
                 minioProperties(),
-                documentMapper,
+                versionMapper,
                 tableMetaMapper,
                 new ExcelSplitter(),
                 jdbc,
@@ -150,18 +150,18 @@ class ExcelImportServiceIntegrationTest {
 
         RuntimeException error = assertThrows(
                 RuntimeException.class,
-                () -> service.importDocument(excelDocument()));
+                () -> service.importDocument(excelVersion(), baseTableName));
 
         assertTrue(error.getMessage().contains("目标表已存在"));
         assertEquals("keep-me", jdbc.queryForObject(
                 "SELECT `value` FROM `" + baseTableName + "`", String.class));
-        verify(documentMapper).compareAndSetStatusWithError(
-                eq("1001"),
+        verify(versionMapper).compareAndSetProcessingStatusWithError(
+                eq("version-1001"),
                 eq(DocumentStatus.UPLOADED),
                 eq(DocumentStatus.IMPORTING),
                 any(String.class));
-        verify(documentMapper, never()).compareAndSetStatusAndClearError(
-                "1001", DocumentStatus.IMPORTED, DocumentStatus.IMPORTING);
+        verify(versionMapper, never()).compareAndSetProcessingStatusAndClearError(
+                "version-1001", DocumentStatus.IMPORTED, DocumentStatus.IMPORTING);
     }
 
     @Test
@@ -191,17 +191,15 @@ class ExcelImportServiceIntegrationTest {
                     SELECT COUNT(*) FROM information_schema.tables
                     WHERE table_schema = DATABASE() AND table_name = 'table_meta'
                     """, Integer.class));
-            assertEquals(2, testDatabase.queryForObject("""
+            assertEquals(3, testDatabase.queryForObject("""
                     SELECT COUNT(*) FROM information_schema.columns
                     WHERE table_schema = DATABASE()
                       AND table_name = 'knowledge_document'
-                      AND column_name IN ('target_table_name', 'raw_object_key')
+                      AND column_name IN ('owner_user_id', 'visibility', 'organization_id')
                     """, Integer.class));
             assertEquals(1, testDatabase.queryForObject("""
-                    SELECT COUNT(DISTINCT index_name) FROM information_schema.statistics
-                    WHERE table_schema = DATABASE()
-                      AND table_name = 'knowledge_document'
-                      AND index_name = 'uk_uploader_file_table'
+                    SELECT COUNT(*) FROM information_schema.tables
+                    WHERE table_schema = DATABASE() AND table_name = 'auth_user'
                     """, Integer.class));
         } finally {
             if (!schemaName.matches("excel_schema_it_[a-f0-9]{12}")) {
@@ -211,23 +209,23 @@ class ExcelImportServiceIntegrationTest {
         }
     }
 
-    private void stubSuccessfulLifecycle(KnowledgeDocumentMapper mapper) {
-        when(mapper.compareAndSetStatus(
-                "1001", DocumentStatus.IMPORTING, DocumentStatus.UPLOADED))
+    private void stubSuccessfulLifecycle(KnowledgeDocumentVersionMapper mapper) {
+        when(mapper.compareAndSetProcessingStatus(
+                "version-1001", DocumentStatus.IMPORTING, DocumentStatus.UPLOADED))
                 .thenReturn(1);
-        when(mapper.compareAndSetStatusAndClearError(
-                "1001", DocumentStatus.IMPORTED, DocumentStatus.IMPORTING))
+        when(mapper.compareAndSetProcessingStatusAndClearError(
+                "version-1001", DocumentStatus.IMPORTED, DocumentStatus.IMPORTING))
                 .thenReturn(1);
     }
 
-    private KnowledgeDocument excelDocument() {
-        KnowledgeDocument document = new KnowledgeDocument();
-        document.setDocId("1001");
-        document.setFileType("xlsx");
-        document.setTargetTableName(baseTableName);
-        document.setRawObjectKey("1001/raw/employees.xlsx");
-        document.setDocumentStatus(DocumentStatus.UPLOADED);
-        return document;
+    private KnowledgeDocumentVersion excelVersion() {
+        KnowledgeDocumentVersion version = new KnowledgeDocumentVersion();
+        version.setVersionId("version-1001");
+        version.setDocId("1001");
+        version.setFileType("xlsx");
+        version.setRawObjectKey("1001/raw/employees.xlsx");
+        version.setDocumentStatus(DocumentStatus.UPLOADED);
+        return version;
     }
 
     private MinioProperties minioProperties() {

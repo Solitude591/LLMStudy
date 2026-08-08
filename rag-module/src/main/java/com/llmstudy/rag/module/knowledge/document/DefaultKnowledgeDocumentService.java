@@ -1,5 +1,8 @@
 package com.llmstudy.rag.module.knowledge.document;
 
+import com.llmstudy.rag.auth.authorization.DocumentAccessPolicy;
+import com.llmstudy.rag.auth.model.AccessContext;
+import com.llmstudy.rag.auth.model.DocumentVisibility;
 import com.llmstudy.rag.client.VisionClient;
 import com.llmstudy.rag.config.MinioProperties;
 import com.llmstudy.rag.dto.DocumentParseResult;
@@ -19,6 +22,7 @@ import com.llmstudy.rag.module.knowledge.ingestion.image.MarkdownImageProcessor;
 import com.llmstudy.rag.module.knowledge.ingestion.parser.DocumentParseContext;
 import com.llmstudy.rag.module.knowledge.ingestion.parser.DocumentParserRouter;
 import com.llmstudy.rag.util.SnowflakeIdGenerator;
+import com.rometools.utils.Lists;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
@@ -103,6 +107,8 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
     /** 在数据库事务内创建逻辑文档与物理版本记录，隔离 MinIO 等网络操作。 */
     private final DocumentVersionPersistenceService versionPersistenceService;
 
+    private final DocumentAccessPolicy accessPolicy;
+
     public DefaultKnowledgeDocumentService(MinioClient minioClient,
                                MinioProperties minioProperties,
                                KnowledgeDocumentMapper documentMapper,
@@ -113,7 +119,8 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
                                JsonMapper objectMapper,
                                ApplicationEventPublisher eventPublisher,
                                SnowflakeIdGenerator idGenerator,
-                               DocumentVersionPersistenceService versionPersistenceService) {
+                               DocumentVersionPersistenceService versionPersistenceService,
+                               DocumentAccessPolicy accessPolicy) {
         this.minioClient = minioClient;
         this.minioProperties = minioProperties;
         this.documentMapper = documentMapper;
@@ -125,23 +132,25 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
         this.eventPublisher = eventPublisher;
         this.idGenerator = idGenerator;
         this.versionPersistenceService = versionPersistenceService;
+        this.accessPolicy = accessPolicy;
     }
 
     /** {@inheritDoc} */
     @Override
     public DocumentVO uploadDocument(MultipartFile file,
                                      String docTitle,
-                                     String uploader,
-                                     String visibility,
+                                     AccessContext actor,
+                                     DocumentVisibility visibility,
                                      String tableName) {
         // 1. 参数校验
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("上传文件不能为空");
         }
-        // todo 这里的上传者后面根据登录用户来获取（暂无实现登录功能）
-        if (uploader == null || uploader.isBlank()) {
-            throw new IllegalArgumentException("上传者不能为空");
+        if (actor == null) {
+            throw new IllegalArgumentException("当前用户不能为空");
         }
+        // 上传者和所有者均取自认证上下文，任何 multipart 参数都不能覆盖该身份。
+        String uploader = actor.userId();
 
         // 原始文件名用于提取扩展名及保留展示信息；文件大小用于上传限制和 MinIO 流式写入。
         String originalName = file.getOriginalFilename();
@@ -177,9 +186,16 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
         if (docTitle == null || docTitle.isBlank()) {
             docTitle = stripExtension(originalName);
         }
-        // todo 权限后面再做；accessible_by 本期只保存、不参与鉴权。
-        if (visibility == null || visibility.isBlank()) {
-            visibility = "private";
+        if (visibility == null) {
+            visibility = DocumentVisibility.PRIVATE;
+        }
+        String organizationId = null;
+        if (visibility == DocumentVisibility.ORGANIZATION) {
+            if (actor.organizationId() == null || actor.organizationId().isBlank()) {
+                throw new IllegalArgumentException("未加入组织的用户不能创建组织文档");
+            }
+            // 新文档的所有者就是当前用户，因此组织直接取当前用户所属组织。
+            organizationId = actor.organizationId();
         }
 
         // 2. 生成 doc_id 与 version_id（雪花算法，本地生成、趋势递增，对 MySQL 聚簇索引友好）
@@ -214,7 +230,9 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
                     docId,
                     versionId,
                     docTitle,
-                    visibility,
+                    actor.userId(),
+                    visibility.name(),
+                    organizationId,
                     contentHash,
                     fileType,
                     uploader,
@@ -232,14 +250,15 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
         eventPublisher.publishEvent(new DocumentUploadedEvent(this, versionId));
 
         return buildUploadedVO(docId, versionId, 1, docTitle, originalName, fileType,
-                fileSize, contentHash, uploader, docUrl, visibility);
+                fileSize, contentHash, uploader, docUrl, visibility.name(),
+                actor.userId(), organizationId);
     }
 
     /** {@inheritDoc} */
     @Override
     public DocumentVO uploadNewVersion(String docId,
                                        MultipartFile file,
-                                       String uploader,
+                                       AccessContext actor,
                                        String changeSummary) {
         if (docId == null || docId.isBlank()) {
             throw new IllegalArgumentException("docId 不能为空");
@@ -247,8 +266,8 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("上传文件不能为空");
         }
-        if (uploader == null || uploader.isBlank()) {
-            throw new IllegalArgumentException("上传者不能为空");
+        if (actor == null) {
+            throw new IllegalArgumentException("当前用户不能为空");
         }
         if (changeSummary != null && changeSummary.strip().length() > 512) {
             throw new IllegalArgumentException("版本变更说明不能超过 512 个字符");
@@ -258,6 +277,9 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
         if (document == null) {
             throw new IllegalArgumentException("文档不存在: " + docId);
         }
+        // 新版本包含未发布内容，必须先验证文档级写权限。
+        accessPolicy.requireWrite(document, actor);
+        String uploader = actor.userId();
 
         String originalName = file.getOriginalFilename();
         String fileType = extractFileType(originalName);
@@ -337,18 +359,24 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
                 contentHash,
                 uploader,
                 docUrl,
-                document.getAccessibleBy());
+                document.getVisibility(),
+                document.getOwnerUserId(), document.getOrganizationId());
     }
 
     /** {@inheritDoc} */
     @Override
-    public DocumentVO getDocument(String docId) {
+    public DocumentVO getDocument(String docId, AccessContext actor) {
         if (docId == null || docId.isBlank()) {
             throw new IllegalArgumentException("docId 不能为空");
         }
 
         KnowledgeDocument doc = documentMapper.findByDocId(docId);
         if (doc == null) {
+            return null;
+        }
+        accessPolicy.requireRead(doc, actor);
+        if (doc.getCurrentVersionId() == null && !accessPolicy.canWrite(doc, actor)) {
+            // 普通读者不能通过详情接口看到仍处于准备阶段的文档或版本元数据。
             return null;
         }
         // 已发布后默认返回当前生效快照；首次发布前才回退到最新的准备中版本。
@@ -360,7 +388,7 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
 
     /** {@inheritDoc} */
     @Override
-    public List<DocumentVersionVO> listVersions(String docId) {
+    public List<DocumentVersionVO> listVersions(String docId, AccessContext actor) {
         if (docId == null || docId.isBlank()) {
             throw new IllegalArgumentException("docId 不能为空");
         }
@@ -368,6 +396,7 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
         if (document == null) {
             return null;
         }
+        accessPolicy.requireWrite(document, actor);
         return versionMapper.findByDocId(docId).stream()
                 .map(version -> toVersionVO(document, version))
                 .toList();
@@ -375,7 +404,7 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
 
     /** {@inheritDoc} */
     @Override
-    public DocumentVersionVO getVersion(String docId, String versionId) {
+    public DocumentVersionVO getVersion(String docId, String versionId, AccessContext actor) {
         if (docId == null || docId.isBlank()) {
             throw new IllegalArgumentException("docId 不能为空");
         }
@@ -386,9 +415,51 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
         if (document == null) {
             return null;
         }
+        accessPolicy.requireWrite(document, actor);
         KnowledgeDocumentVersion version =
                 versionMapper.findByDocIdAndVersionId(docId, versionId);
         return version == null ? null : toVersionVO(document, version);
+    }
+
+    @Override
+    public List<DocumentVO> listAccessibleDocuments(AccessContext actor) {
+        if (actor == null) {
+            throw new IllegalArgumentException("当前用户不能为空");
+        }
+        // SQL 先按可见范围缩小集合，再在映射阶段处理“未发布版本仅写者可见”。
+        return documentMapper.findAccessible(actor.userId(), actor.organizationId(),
+                        actor.isSystemAdmin()).stream()
+                .map(document -> {
+                    KnowledgeDocumentVersion version = document.getCurrentVersionId() == null
+                            ? accessPolicy.canWrite(document, actor)
+                            ? versionMapper.findLatestByDocId(document.getDocId()) : null
+                            : versionMapper.findByDocIdAndVersionId(
+                                    document.getDocId(), document.getCurrentVersionId());
+                    return toVO(document, version);
+                })
+                .filter(vo -> vo.getVersionId() != null)
+                .toList();
+    }
+
+    @Override
+    public DocumentVO updateVisibility(String docId, DocumentVisibility visibility,
+                                       AccessContext actor) {
+        if (docId == null || docId.isBlank() || visibility == null) {
+            throw new IllegalArgumentException("docId 和 visibility 不能为空");
+        }
+        KnowledgeDocument document = documentMapper.findByDocId(docId);
+        if (document == null) {
+            return null;
+        }
+        accessPolicy.requireWrite(document, actor);
+        // 组织 ID 不能由请求体指定；切换为组织可见时始终根据文档所有者推导。
+        String organizationId = visibility == DocumentVisibility.ORGANIZATION
+                ? accessPolicy.resolveOwnerOrganization(document) : null;
+        if (documentMapper.updateVisibility(
+                docId, visibility.name(), organizationId) != 1) {
+            throw new IllegalStateException("更新文档可见范围失败");
+        }
+        return getDocument(docId, actor);
     }
 
     /** {@inheritDoc} */
@@ -676,7 +747,9 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
                                        String contentHash,
                                        String uploader,
                                        String docUrl,
-                                       String visibility) {
+                                       String visibility,
+                                       String ownerUserId,
+                                       String organizationId) {
         return DocumentVO.builder()
                 .docId(docId)
                 .versionId(versionId)
@@ -692,6 +765,8 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
                 .processingStatus(DocumentStatus.UPLOADED.value())
                 .releaseStatus(DocumentReleaseStatus.PREPARING.value())
                 .visibility(visibility)
+                .ownerUserId(ownerUserId)
+                .organizationId(organizationId)
                 .duplicate(false)
                 .build();
     }
@@ -703,7 +778,9 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
         DocumentVO.Builder builder = DocumentVO.builder()
                 .docId(doc.getDocId())
                 .docTitle(doc.getDocTitle())
-                .visibility(doc.getAccessibleBy())
+                .visibility(doc.getVisibility())
+                .ownerUserId(doc.getOwnerUserId())
+                .organizationId(doc.getOrganizationId())
                 .createdAt(doc.getCreatedAt())
                 .duplicate(false);
         if (latest != null) {

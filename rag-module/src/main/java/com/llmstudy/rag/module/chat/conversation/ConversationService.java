@@ -26,7 +26,7 @@ public interface ConversationService {
      * @param conversationId 会话唯一标识
      * @return 会话实体；不存在时返回 null
      */
-    ChatConversation getConversation(String conversationId);
+    ChatConversation getConversation(String conversationId, String userId);
 
     /**
      * 查询指定用户的全部会话。
@@ -59,7 +59,7 @@ public interface ConversationService {
      *
      * @param conversationId 会话唯一标识
      */
-    void deleteConversation(String conversationId);
+    void deleteConversation(String conversationId, String userId);
 
     /**
      * 保存一条聊天消息。
@@ -138,7 +138,7 @@ public interface ConversationService {
      * @param conversationId 会话唯一标识
      * @return 消息列表
      */
-    List<ChatMessage> listMessages(String conversationId);
+    List<ChatMessage> listMessages(String conversationId, String userId);
 
     /**
      * 查询某会话下最近 limit 条消息（按创建时间升序）。

@@ -130,8 +130,10 @@ public class ChatOrchestrator {
                 flow = ragChatFlow;
             }
         }
+        // 身份快照与问题、历史一起进入 Flow，后续异步步骤不再读取 Sa-Token ThreadLocal。
         ChatFlow.FlowPreparation flowPreparation = flow.prepare(new ChatFlowContext(
-                base.command().query(), base.history(), intent));
+                base.command().query(), base.history(), intent,
+                base.command().accessContext()));
         if (flowPreparation.rewrittenQuery() != null) {
             conversationService.updateMessageTransformContent(
                     base.userMessage().getMessageId(), flowPreparation.rewrittenQuery());

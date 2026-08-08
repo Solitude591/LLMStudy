@@ -1,15 +1,71 @@
+CREATE TABLE IF NOT EXISTS `auth_organization`
+(
+    `id`                BIGINT      NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+    `organization_id`   VARCHAR(64) NOT NULL COMMENT '组织业务标识',
+    `organization_name` VARCHAR(128) NOT NULL COMMENT '组织名称',
+    `created_at`        DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`        DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_auth_organization_id` (`organization_id`),
+    UNIQUE KEY `uk_auth_organization_name` (`organization_name`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT = '认证组织表';
+
+CREATE TABLE IF NOT EXISTS `auth_user`
+(
+    `id`              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+    `user_id`         VARCHAR(64)  NOT NULL COMMENT '用户业务标识',
+    `username`        VARCHAR(64)  NOT NULL COMMENT '登录名',
+    `password_hash`   VARCHAR(100) NOT NULL COMMENT 'BCrypt 密码哈希',
+    `display_name`    VARCHAR(128) NOT NULL COMMENT '展示名',
+    `organization_id` VARCHAR(64)           DEFAULT NULL COMMENT '所属组织',
+    `role`            VARCHAR(32)  NOT NULL DEFAULT 'USER' COMMENT 'USER, ORG_ADMIN, SYS_ADMIN',
+    `status`          VARCHAR(32)  NOT NULL DEFAULT 'ENABLED' COMMENT 'ENABLED, DISABLED',
+    `created_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_auth_user_id` (`user_id`),
+    UNIQUE KEY `uk_auth_username` (`username`),
+    KEY `idx_auth_user_organization_role` (`organization_id`, `role`),
+    CONSTRAINT `fk_auth_user_organization` FOREIGN KEY (`organization_id`)
+        REFERENCES `auth_organization` (`organization_id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT = '认证用户表';
+
+INSERT IGNORE INTO `auth_organization` (`organization_id`, `organization_name`)
+VALUES ('org-a', '组织 A'),
+       ('org-b', '组织 B');
+
+-- 演示密码均为 ChangeMe123!；生产环境启动前必须替换。
+INSERT IGNORE INTO `auth_user`
+    (`user_id`, `username`, `password_hash`, `display_name`, `organization_id`, `role`, `status`)
+VALUES ('user-alice', 'alice', '$2y$10$QOwF4gQSwPyY4Hbxf3Otcuezq7.ufOu6fj3l3YQ1JfVHeFk2xFyiq',
+        'Alice', 'org-a', 'USER', 'ENABLED'),
+       ('user-org-admin', 'org_admin', '$2y$10$QOwF4gQSwPyY4Hbxf3Otcuezq7.ufOu6fj3l3YQ1JfVHeFk2xFyiq',
+        '组织 A 管理员', 'org-a', 'ORG_ADMIN', 'ENABLED'),
+       ('user-bob', 'bob', '$2y$10$QOwF4gQSwPyY4Hbxf3Otcuezq7.ufOu6fj3l3YQ1JfVHeFk2xFyiq',
+        'Bob', 'org-b', 'USER', 'ENABLED'),
+       ('user-sys-admin', 'sys_admin', '$2y$10$QOwF4gQSwPyY4Hbxf3Otcuezq7.ufOu6fj3l3YQ1JfVHeFk2xFyiq',
+        '系统管理员', NULL, 'SYS_ADMIN', 'ENABLED');
+
 CREATE TABLE IF NOT EXISTS `knowledge_document`
 (
     `id`                 BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增主键',
     `doc_id`             BIGINT       NOT NULL COMMENT '逻辑文档唯一标识（雪花算法生成）',
     `doc_title`          VARCHAR(255) NOT NULL COMMENT '文档标题',
-    `accessible_by`      VARCHAR(255)          DEFAULT NULL COMMENT '预留的可访问主体标识，当前不参与权限校验',
+    `owner_user_id`      VARCHAR(64)  NOT NULL COMMENT '文档所有者',
+    `visibility`         VARCHAR(32)  NOT NULL DEFAULT 'PRIVATE' COMMENT 'PRIVATE, ORGANIZATION, PUBLIC',
+    `organization_id`   VARCHAR(64)           DEFAULT NULL COMMENT '组织文档所属组织',
     `current_version_id` BIGINT                DEFAULT NULL COMMENT '当前已发布的物理版本 ID，首次发布前为 NULL',
     `created_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_doc_id` (`doc_id`),
     KEY `idx_doc_current_version` (`doc_id`, `current_version_id`),
+    KEY `idx_doc_owner_visibility` (`owner_user_id`, `visibility`),
+    KEY `idx_doc_organization_visibility` (`organization_id`, `visibility`),
     KEY `idx_created_at` (`created_at`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
@@ -181,6 +237,148 @@ CREATE TABLE IF NOT EXISTS `chat_message`
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci COMMENT = '聊天消息表';
+
+-- 旧版允许前端任意填写 user_id。添加外键前清理这些无法归属的旧会话。
+DELETE message
+FROM `chat_message` message
+JOIN `chat_conversation` conversation
+  ON conversation.conversation_id = message.conversation_id
+LEFT JOIN `auth_user` user_account
+  ON user_account.user_id = conversation.user_id
+WHERE user_account.user_id IS NULL;
+
+DELETE conversation
+FROM `chat_conversation` conversation
+LEFT JOIN `auth_user` user_account
+  ON user_account.user_id = conversation.user_id
+WHERE user_account.user_id IS NULL;
+
+-- 兼容已存在的 knowledge_document：补齐新权限列并移除旧预留列。
+SET @doc_owner_column_exists = (
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_document'
+      AND COLUMN_NAME = 'owner_user_id'
+);
+SET @doc_owner_column_sql = IF(@doc_owner_column_exists = 0,
+    'ALTER TABLE `knowledge_document` ADD COLUMN `owner_user_id` VARCHAR(64) NULL AFTER `doc_title`',
+    'SELECT 1');
+PREPARE doc_owner_column_stmt FROM @doc_owner_column_sql;
+EXECUTE doc_owner_column_stmt;
+DEALLOCATE PREPARE doc_owner_column_stmt;
+
+SET @doc_visibility_column_exists = (
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_document'
+      AND COLUMN_NAME = 'visibility'
+);
+SET @doc_visibility_column_sql = IF(@doc_visibility_column_exists = 0,
+    'ALTER TABLE `knowledge_document` ADD COLUMN `visibility` VARCHAR(32) NOT NULL DEFAULT ''PRIVATE'' AFTER `owner_user_id`',
+    'SELECT 1');
+PREPARE doc_visibility_column_stmt FROM @doc_visibility_column_sql;
+EXECUTE doc_visibility_column_stmt;
+DEALLOCATE PREPARE doc_visibility_column_stmt;
+
+SET @doc_organization_column_exists = (
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_document'
+      AND COLUMN_NAME = 'organization_id'
+);
+SET @doc_organization_column_sql = IF(@doc_organization_column_exists = 0,
+    'ALTER TABLE `knowledge_document` ADD COLUMN `organization_id` VARCHAR(64) NULL AFTER `visibility`',
+    'SELECT 1');
+PREPARE doc_organization_column_stmt FROM @doc_organization_column_sql;
+EXECUTE doc_organization_column_stmt;
+DEALLOCATE PREPARE doc_organization_column_stmt;
+
+UPDATE `knowledge_document`
+SET `owner_user_id` = 'user-alice'
+WHERE `owner_user_id` IS NULL OR `owner_user_id` = '';
+ALTER TABLE `knowledge_document`
+    MODIFY COLUMN `owner_user_id` VARCHAR(64) NOT NULL COMMENT '文档所有者';
+
+SET @accessible_by_column_exists = (
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_document'
+      AND COLUMN_NAME = 'accessible_by'
+);
+SET @accessible_by_drop_sql = IF(@accessible_by_column_exists > 0,
+    'ALTER TABLE `knowledge_document` DROP COLUMN `accessible_by`', 'SELECT 1');
+PREPARE accessible_by_drop_stmt FROM @accessible_by_drop_sql;
+EXECUTE accessible_by_drop_stmt;
+DEALLOCATE PREPARE accessible_by_drop_stmt;
+
+-- 对已有表幂等添加认证外键；新建和升级路径共用。
+SET @chat_user_fk_exists = (
+    SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+    WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_conversation'
+      AND CONSTRAINT_NAME = 'fk_chat_conversation_user' AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+);
+SET @chat_user_fk_sql = IF(@chat_user_fk_exists = 0,
+    'ALTER TABLE `chat_conversation` ADD CONSTRAINT `fk_chat_conversation_user` FOREIGN KEY (`user_id`) REFERENCES `auth_user` (`user_id`) ON DELETE RESTRICT ON UPDATE CASCADE',
+    'SELECT 1');
+PREPARE chat_user_fk_stmt FROM @chat_user_fk_sql;
+EXECUTE chat_user_fk_stmt;
+DEALLOCATE PREPARE chat_user_fk_stmt;
+
+SET @doc_owner_fk_exists = (
+    SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+    WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_document'
+      AND CONSTRAINT_NAME = 'fk_knowledge_document_owner' AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+);
+SET @doc_owner_fk_sql = IF(@doc_owner_fk_exists = 0,
+    'ALTER TABLE `knowledge_document` ADD CONSTRAINT `fk_knowledge_document_owner` FOREIGN KEY (`owner_user_id`) REFERENCES `auth_user` (`user_id`) ON DELETE RESTRICT ON UPDATE CASCADE',
+    'SELECT 1');
+PREPARE doc_owner_fk_stmt FROM @doc_owner_fk_sql;
+EXECUTE doc_owner_fk_stmt;
+DEALLOCATE PREPARE doc_owner_fk_stmt;
+
+SET @doc_org_fk_exists = (
+    SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+    WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_document'
+      AND CONSTRAINT_NAME = 'fk_knowledge_document_organization' AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+);
+SET @doc_org_fk_sql = IF(@doc_org_fk_exists = 0,
+    'ALTER TABLE `knowledge_document` ADD CONSTRAINT `fk_knowledge_document_organization` FOREIGN KEY (`organization_id`) REFERENCES `auth_organization` (`organization_id`) ON DELETE RESTRICT ON UPDATE CASCADE',
+    'SELECT 1');
+PREPARE doc_org_fk_stmt FROM @doc_org_fk_sql;
+EXECUTE doc_org_fk_stmt;
+DEALLOCATE PREPARE doc_org_fk_stmt;
+
+SET @doc_owner_visibility_index_exists = (
+    SELECT COUNT(*) FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_document'
+      AND INDEX_NAME = 'idx_doc_owner_visibility'
+);
+SET @doc_owner_visibility_index_sql = IF(@doc_owner_visibility_index_exists = 0,
+    'ALTER TABLE `knowledge_document` ADD INDEX `idx_doc_owner_visibility` (`owner_user_id`, `visibility`)',
+    'SELECT 1');
+PREPARE doc_owner_visibility_index_stmt FROM @doc_owner_visibility_index_sql;
+EXECUTE doc_owner_visibility_index_stmt;
+DEALLOCATE PREPARE doc_owner_visibility_index_stmt;
+
+SET @doc_org_visibility_index_exists = (
+    SELECT COUNT(*) FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_document'
+      AND INDEX_NAME = 'idx_doc_organization_visibility'
+);
+SET @doc_org_visibility_index_sql = IF(@doc_org_visibility_index_exists = 0,
+    'ALTER TABLE `knowledge_document` ADD INDEX `idx_doc_organization_visibility` (`organization_id`, `visibility`)',
+    'SELECT 1');
+PREPARE doc_org_visibility_index_stmt FROM @doc_org_visibility_index_sql;
+EXECUTE doc_org_visibility_index_stmt;
+DEALLOCATE PREPARE doc_org_visibility_index_stmt;
+
+SET @version_uploader_fk_exists = (
+    SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+    WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'knowledge_document_version'
+      AND CONSTRAINT_NAME = 'fk_document_version_uploader' AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+);
+SET @version_uploader_fk_sql = IF(@version_uploader_fk_exists = 0,
+    'ALTER TABLE `knowledge_document_version` ADD CONSTRAINT `fk_document_version_uploader` FOREIGN KEY (`uploaded_by`) REFERENCES `auth_user` (`user_id`) ON DELETE RESTRICT ON UPDATE CASCADE',
+    'SELECT 1');
+PREPARE version_uploader_fk_stmt FROM @version_uploader_fk_sql;
+EXECUTE version_uploader_fk_stmt;
+DEALLOCATE PREPARE version_uploader_fk_stmt;
 
 -- 小写枚举值统一为大写。
 UPDATE `table_meta`

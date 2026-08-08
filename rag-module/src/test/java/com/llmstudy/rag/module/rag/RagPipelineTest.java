@@ -37,7 +37,7 @@ class RagPipelineTest {
         RagReference reference = new RagReference(
                 1, "doc", "1", null, null, 0.5, null);
         when(rewriter.rewrite(request)).thenReturn(rewritten);
-        when(retriever.retrieve(rewritten)).thenReturn(retrieval);
+        when(retriever.retrieve(rewritten, null)).thenReturn(retrieval);
         when(aggregator.aggregate(rewritten, retrieval)).thenReturn(List.of(candidate));
         when(injector.inject(request, rewritten, List.of(candidate)))
                 .thenReturn(new RagPromptInjector.Injection(
@@ -51,7 +51,7 @@ class RagPipelineTest {
         assertEquals("rewritten", result.rewrittenQuery().rewrittenQuestion());
         var ordered = inOrder(rewriter, retriever, aggregator, injector);
         ordered.verify(rewriter).rewrite(request);
-        ordered.verify(retriever).retrieve(rewritten);
+        ordered.verify(retriever).retrieve(rewritten, null);
         ordered.verify(aggregator).aggregate(rewritten, retrieval);
         ordered.verify(injector).inject(request, rewritten, List.of(candidate));
     }

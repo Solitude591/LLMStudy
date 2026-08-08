@@ -1,5 +1,6 @@
 package com.llmstudy.rag.controller.dev;
 
+import cn.dev33.satoken.annotation.SaCheckRole;
 import com.llmstudy.rag.module.rag.model.RagRequest;
 import com.llmstudy.rag.module.rag.model.RewrittenQuery;
 import com.llmstudy.rag.module.rag.query.QueryRewriter;
@@ -14,6 +15,7 @@ import java.util.Map;
 @RestController
 @Profile("dev")
 @RequestMapping("/chat/client")
+@SaCheckRole("SYS_ADMIN")
 public class QueryTransformerController {
 
     private final QueryRewriter queryRewriter;

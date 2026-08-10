@@ -1,0 +1,124 @@
+package com.llmstudy.rag.module.dataset;
+
+import com.llmstudy.rag.auth.model.AccessContext;
+import com.llmstudy.rag.auth.model.UserRole;
+import com.llmstudy.rag.dto.DatasetGenerateResponse;
+import com.llmstudy.rag.module.chat.flow.RagChatFlow;
+import com.llmstudy.rag.module.llm.model.LlmPrompt;
+import com.llmstudy.rag.module.rag.RagPipeline;
+import com.llmstudy.rag.module.rag.model.RagIntentContext;
+import com.llmstudy.rag.module.rag.model.RagReference;
+import com.llmstudy.rag.module.rag.model.RagRequest;
+import com.llmstudy.rag.module.rag.model.RagResult;
+import com.llmstudy.rag.module.rag.model.RewrittenQuery;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.openai.OpenAiChatOptions;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+class DatasetGenerationServiceTest {
+
+    private static final AccessContext ACCESS =
+            new AccessContext("user-1", "org-a", UserRole.USER);
+
+    private RagPipeline pipeline;
+    private ChatModel chatModel;
+    private DatasetGenerationService service;
+
+    @BeforeEach
+    void setUp() {
+        pipeline = mock(RagPipeline.class);
+        chatModel = mock(ChatModel.class);
+        when(chatModel.getOptions()).thenReturn(OpenAiChatOptions.builder().build());
+        service = new DatasetGenerationService(pipeline, ChatClient.builder(chatModel).build());
+    }
+
+    @Test
+    void passesAccessContextAndOriginalQueryToPipeline() {
+        when(pipeline.execute(any())).thenReturn(emptyResult());
+
+        service.generate("表 3 中哪个模型的 F1 最高？", ACCESS);
+
+        ArgumentCaptor<RagRequest> captor = ArgumentCaptor.forClass(RagRequest.class);
+        verify(pipeline).execute(captor.capture());
+        RagRequest request = captor.getValue();
+        assertEquals("表 3 中哪个模型的 F1 最高？", request.question());
+        assertEquals("无", request.conversationContext());
+        assertEquals(RagIntentContext.generic(), request.intentContext());
+        assertEquals(ACCESS, request.accessContext());
+    }
+
+    @Test
+    void returnsOriginalQueryNotRewrittenQuestion() {
+        when(pipeline.execute(any())).thenReturn(new RagResult(
+                new LlmPrompt("system", "user"),
+                new RewrittenQuery("原问题", "改写后的问题"),
+                List.of(new RagReference(1, "doc", "c1", null, null, null, null, 0.9, null)),
+                List.of("证据正文")));
+        when(chatModel.call(any(Prompt.class))).thenReturn(ChatResponse.builder()
+                .generations(List.of(new Generation(new AssistantMessage("Hybrid RAG 最高[1]。"))))
+                .build());
+
+        DatasetGenerateResponse response = service.generate("原问题", ACCESS);
+
+        assertEquals("原问题", response.query());
+        assertEquals("Hybrid RAG 最高[1]。", response.response());
+        assertEquals(List.of("证据正文"), response.chunks());
+    }
+
+    @Test
+    void emptyRetrievalReturnsFixedAnswerWithoutCallingLlm() {
+        when(pipeline.execute(any())).thenReturn(emptyResult());
+
+        DatasetGenerateResponse response = service.generate("无结果问题", ACCESS);
+
+        assertEquals("无结果问题", response.query());
+        assertEquals(RagChatFlow.NO_KNOWLEDGE_ANSWER, response.response());
+        assertEquals(List.of(), response.chunks());
+        verify(chatModel, never()).call(any(Prompt.class));
+    }
+
+    @Test
+    void blankModelResponseThrows() {
+        when(pipeline.execute(any())).thenReturn(new RagResult(
+                new LlmPrompt("system", "user"),
+                new RewrittenQuery("q", "rewritten"),
+                List.of(new RagReference(1, "doc", "c1", null, null, null, null, 0.5, null)),
+                List.of("chunk")));
+        when(chatModel.call(any(Prompt.class))).thenReturn(ChatResponse.builder()
+                .generations(List.of(new Generation(new AssistantMessage("   "))))
+                .build());
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> service.generate("q", ACCESS));
+        assertTrue(error.getMessage().contains("有效内容")
+                || error.getMessage().contains("输出内容"));
+    }
+
+    @Test
+    void rejectsBlankQuery() {
+        assertThrows(IllegalArgumentException.class, () -> service.generate("  ", ACCESS));
+        verify(pipeline, never()).execute(any());
+    }
+
+    private static RagResult emptyResult() {
+        return new RagResult(null, new RewrittenQuery("q", "rewritten"), List.of(), List.of());
+    }
+}

@@ -3,14 +3,16 @@ package com.llmstudy.rag.enums;
 import java.util.Arrays;
 
 /**
- * 父子分片中的节点类型。
+ * 分片器内部节点类型。
+ *
+ * <p>仅用于决定 {@code skip_embedding}，不写入 MySQL metadata。</p>
  */
 public enum ChunkType {
 
     /** 未超过大小限制，可以直接向量化的独立分片。 */
     STANDALONE("standalone", false),
 
-    /** 保存完整章节上下文的父分片，本身不参与向量化。 */
+    /** 保存完整正文上下文的父分片，本身不参与向量化。 */
     PARENT("parent", true),
 
     /** 超限父分片二次切割出的检索分片。 */
@@ -24,9 +26,6 @@ public enum ChunkType {
         this.skipEmbedding = skipEmbedding;
     }
 
-    /**
-     * 获取写入 metadata/数据库 JSON 的稳定字符串值。
-     */
     public String value() {
         return value;
     }

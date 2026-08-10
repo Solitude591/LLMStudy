@@ -545,7 +545,8 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
                     "text/markdown; charset=utf-8");
             uploadedKeys.add(mdObjectKey);
 
-            // 7. 上传 content_list.json，供后续「基于标题的父子分段」直接消费
+            // 7. 上传 content_list.json，供后续原子分片直接消费
+            String contentListUrl = null;
             if (parseResult.hasContentList()) {
                 String contentListKey = buildContentListObjectKey(docId, versionId);
                 // content_list 保留标题、页码和图片描述，后续分片无需重新解析 Markdown 猜测结构。
@@ -554,6 +555,7 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
                         .getBytes(StandardCharsets.UTF_8);
                 putObject(contentListKey, contentListBytes, "application/json; charset=utf-8");
                 uploadedKeys.add(contentListKey);
+                contentListUrl = buildDocUrl(contentListKey);
             }
 
             // 8. 全部成功后才写回版本记录
@@ -562,14 +564,15 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
             int updated = versionMapper.updateConverted(
                     versionId,
                     convertedDocUrl,
+                    contentListUrl,
                     DocumentStatus.CONVERTED,
                     DocumentStatus.CONVERTING);
             if (updated != 1) {
                 throw new IllegalStateException("更新版本解析结果失败: versionId=" + versionId);
             }
 
-            log.info("文档解析流程完成: versionId={}, 图片={}张, 描述={}条, convertedUrl={}",
-                    versionId, urlMapping.size(), descriptions.size(), convertedDocUrl);
+            log.info("文档解析流程完成: versionId={}, 图片={}张, 描述={}条, convertedUrl={}, contentListUrl={}",
+                    versionId, urlMapping.size(), descriptions.size(), convertedDocUrl, contentListUrl);
         } catch (Exception e) {
             log.error("文档解析失败，回滚状态并清理产物: versionId={}", versionId, e);
             // 只删除本次解析新写入的对象，原始文件仍保留；重新触发即可重试。

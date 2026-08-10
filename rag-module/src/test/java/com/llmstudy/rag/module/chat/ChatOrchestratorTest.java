@@ -101,7 +101,7 @@ class ChatOrchestratorTest {
     @Test
     void intentFallbackSelectsRagAndPersistsRewrite() {
         RagReference reference = new RagReference(1, "doc", "chunk",
-                null, null, 0.5, null);
+                null, null, null, null, 0.5, null);
         when(recognizer.recognize("question", List.of()))
                 .thenReturn(IntentRecognitionResult.fallback("unavailable"));
         when(ragFlow.prepare(any(ChatFlowContext.class))).thenReturn(

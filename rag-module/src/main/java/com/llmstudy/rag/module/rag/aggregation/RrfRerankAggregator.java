@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 import java.util.Comparator;
 import java.util.List;
 
-/** 先执行 RRF，再可选执行 ReRanker，最后统一截断 Top N。 */
+/** 先执行 RRF，再可选 ReRanker；最终 Top-N 由 Pipeline 在 parent 展开去重之后截断。 */
 @Component
 public class RrfRerankAggregator implements RetrievalAggregator {
 
@@ -27,7 +27,10 @@ public class RrfRerankAggregator implements RetrievalAggregator {
     }
 
     /**
-     * 聚合双路候选。单路故障时不再对仅存通道做 RRF，直接保留其原始排序。
+     * 聚合双路候选并重排，保留最多 {@code candidateCount} 条供后续 parent 展开。
+     *
+     * <p>此处故意不做最终 Top-N：多个 child 可能折叠为同一 parent，
+     * 若先截断再去重会把证据条数压得过少。</p>
      */
     @Override
     public List<RetrievalCandidate> aggregate(
@@ -46,9 +49,7 @@ public class RrfRerankAggregator implements RetrievalAggregator {
             candidates = fusion.fuse(result.bm25(), result.knn(),
                     properties.getCandidateCount());
         }
-        // ReRanker 内部会在禁用或失败时返回原顺序，Top N 截断始终执行。
-        return reranker.rerank(query.originalQuestion(), candidates).stream()
-                .limit(properties.getTopN())
-                .toList();
+        // ReRanker 内部会在禁用或失败时返回原顺序。
+        return reranker.rerank(query.originalQuestion(), candidates);
     }
 }

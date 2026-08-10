@@ -87,6 +87,7 @@ public interface KnowledgeDocumentVersionMapper {
                 doc_url,
                 raw_object_key,
                 converted_doc_url,
+                content_list_url,
                 processing_status,
                 release_status,
                 error_message,
@@ -106,6 +107,7 @@ public interface KnowledgeDocumentVersionMapper {
                 #{docUrl},
                 #{rawObjectKey},
                 #{convertedDocUrl},
+                #{contentListUrl},
                 #{processingStatus},
                 #{releaseStatus},
                 #{errorMessage},
@@ -144,11 +146,12 @@ public interface KnowledgeDocumentVersionMapper {
     }
 
     /**
-     * 解析完成后保存 Markdown 地址并推进处理状态。
+     * 解析完成后保存 Markdown / content_list 地址并推进处理状态。
      */
     @Update("""
             UPDATE knowledge_document_version
             SET converted_doc_url = #{convertedDocUrl},
+                content_list_url = #{contentListUrl},
                 processing_status = #{targetStatus},
                 error_message = NULL,
                 retry_count = 0
@@ -158,6 +161,7 @@ public interface KnowledgeDocumentVersionMapper {
     int updateConvertedValue(
             @Param("versionId") String versionId,
             @Param("convertedDocUrl") String convertedDocUrl,
+            @Param("contentListUrl") String contentListUrl,
             @Param("targetStatus") String targetStatus,
             @Param("expectedStatus") String expectedStatus);
 
@@ -166,10 +170,20 @@ public interface KnowledgeDocumentVersionMapper {
             String convertedDocUrl,
             DocumentStatus targetStatus,
             DocumentStatus expectedStatus) {
+        return updateConverted(versionId, convertedDocUrl, null, targetStatus, expectedStatus);
+    }
+
+    default int updateConverted(
+            String versionId,
+            String convertedDocUrl,
+            String contentListUrl,
+            DocumentStatus targetStatus,
+            DocumentStatus expectedStatus) {
 
         return updateConvertedValue(
                 versionId,
                 convertedDocUrl,
+                contentListUrl,
                 targetStatus.value(),
                 expectedStatus.value());
     }

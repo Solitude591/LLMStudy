@@ -276,8 +276,10 @@ public class MarkdownImageProcessor {
 
     /**
      * alt 文本转义：方括号会截断 Markdown 图片语法，换行会打断节点结构。
+     *
+     * <p>分片渲染图片节点时也会复用，保证入库正文与解析阶段改写规则一致。</p>
      */
-    private String escapeAltText(String description) {
+    public String escapeAltText(String description) {
         if (description == null || description.isBlank()) {
             return "";
         }

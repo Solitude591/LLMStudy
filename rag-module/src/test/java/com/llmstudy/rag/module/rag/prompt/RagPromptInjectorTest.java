@@ -51,7 +51,31 @@ class RagPromptInjectorTest {
         assertTrue(result.prompt().userMessage().contains("F1 提升了 2.1 个百分点"));
         assertTrue(result.prompt().userMessage().contains("<reference_information>"));
         assertFalse(result.prompt().systemMessage().contains("F1 提升了 2.1 个百分点"));
+        assertTrue(result.prompt().userMessage().contains("章节: 实验 > 主结果"));
+        assertTrue(result.prompt().userMessage().contains("页码: 未知"));
+        assertNull(result.references().getFirst().pageStart());
         assertEquals("chunk-1", result.references().getFirst().chunkId());
+    }
+
+    @Test
+    void injectsPageRangeIntoPromptAndReference() {
+        RagPromptInjector injector = new RagPromptInjector(
+                new RagPromptTemplateRegistry(new DefaultResourceLoader()));
+        RetrievalCandidate candidate = new RetrievalCandidate(
+                "chunk-2", "evidence",
+                Map.of(SegmentMetadataKeys.DOC_ID, "doc-1",
+                        SegmentMetadataKeys.PAGE_START, 3,
+                        SegmentMetadataKeys.PAGE_END, 4),
+                0.7, null);
+
+        RagPromptInjector.Injection result = injector.inject(
+                new RagRequest("question", "无"),
+                new RewrittenQuery("question", "rewritten"),
+                List.of(candidate));
+
+        assertTrue(result.prompt().userMessage().contains("页码: 第 3–4 页"));
+        assertEquals(3, result.references().getFirst().pageStart());
+        assertEquals(4, result.references().getFirst().pageEnd());
     }
 
     @Test

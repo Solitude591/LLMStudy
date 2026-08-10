@@ -11,6 +11,7 @@ import com.llmstudy.rag.mapper.KnowledgeDocumentVersionMapper;
 import com.llmstudy.rag.mapper.KnowledgeSegmentMapper;
 import com.llmstudy.rag.module.knowledge.ingestion.DocumentStageAlreadyRunningException;
 import com.llmstudy.rag.module.knowledge.model.SegmentMetadataKeys;
+import com.llmstudy.rag.module.knowledge.model.SegmentMetadataMaps;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -150,22 +151,13 @@ public class ElasticsearchSegmentIndexer implements SegmentEmbeddingService {
     }
 
     /** 在 ES 适配器边界解析 metadata，单条损坏数据不阻断正文向量化。 */
-    @SuppressWarnings("unchecked")
     private Map<String, Object> parseMetadata(String json) {
-        if (json == null || json.isBlank()) {
-            return new LinkedHashMap<>();
-        }
-        try {
-            return new LinkedHashMap<>(jsonMapper.readValue(json, Map.class));
-        } catch (Exception e) {
-            log.warn("metadata JSON 解析失败，使用空 metadata", e);
-            return new LinkedHashMap<>();
-        }
+        return SegmentMetadataMaps.parse(json, jsonMapper);
     }
 
     /**
      * ES 使用 strict mapping，只允许写入检索过滤、父分片回查和引用展示所需字段。
-     * MySQL metadata 中的 chunk_type、skip_embedding、标题分级等字段不得透传到 ES。
+     * {@code doc_id/version_id/source_url} 由实体生成；结构字段从精简 MySQL metadata 复制。
      */
     private Map<String, Object> buildElasticsearchMetadata(
             KnowledgeSegment segment, KnowledgeDocumentVersion version) {
@@ -179,26 +171,16 @@ public class ElasticsearchSegmentIndexer implements SegmentEmbeddingService {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put(SegmentMetadataKeys.DOC_ID, version.getDocId());
         metadata.put(SegmentMetadataKeys.VERSION_ID, version.getVersionId());
-        copyIfPresent(source, metadata, SegmentMetadataKeys.PARENT_CHUNK_ID);
-        copyIfPresent(source, metadata, SegmentMetadataKeys.HEADER_PATH);
+        SegmentMetadataMaps.copyString(source, metadata, SegmentMetadataKeys.PARENT_CHUNK_ID);
+        SegmentMetadataMaps.copyString(source, metadata, SegmentMetadataKeys.HEADER_PATH);
+        SegmentMetadataMaps.copyPositiveInt(source, metadata, SegmentMetadataKeys.PAGE_START);
+        SegmentMetadataMaps.copyPositiveInt(source, metadata, SegmentMetadataKeys.PAGE_END);
 
-        Object sourceUrl = source.get(SegmentMetadataKeys.SOURCE_URL);
-        if (sourceUrl == null || sourceUrl.toString().isBlank()) {
-            sourceUrl = version.getConvertedDocUrl();
-        }
-        if (sourceUrl != null && !sourceUrl.toString().isBlank()) {
-            metadata.put(SegmentMetadataKeys.SOURCE_URL, sourceUrl.toString());
+        // 新契约不再把 source_url 写入 MySQL；统一由版本 converted_doc_url 重建。
+        if (version.getConvertedDocUrl() != null && !version.getConvertedDocUrl().isBlank()) {
+            metadata.put(SegmentMetadataKeys.SOURCE_URL, version.getConvertedDocUrl());
         }
         return metadata;
-    }
-
-    private static void copyIfPresent(Map<String, Object> source,
-                                      Map<String, Object> target,
-                                      String key) {
-        Object value = source.get(key);
-        if (value != null && !value.toString().isBlank()) {
-            target.put(key, value.toString());
-        }
     }
 
     private static String truncate(String message) {

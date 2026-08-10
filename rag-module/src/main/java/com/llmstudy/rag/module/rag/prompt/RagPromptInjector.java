@@ -49,18 +49,21 @@ public class RagPromptInjector {
             int citation = index + 1;
             Map<String, Object> metadata = candidate.metadata();
             String docId = string(metadata.get(SegmentMetadataKeys.DOC_ID));
-            // 父分片 metadata 可能缺少 chunk_id，此时使用候选 ID 作为稳定兜底。
             String chunkId = stringOr(metadata.get(SegmentMetadataKeys.CHUNK_ID), candidate.id());
             String headerPath = string(metadata.get(SegmentMetadataKeys.HEADER_PATH));
             String sourceUrl = string(metadata.get(SegmentMetadataKeys.SOURCE_URL));
+            Integer pageStart = integer(metadata.get(SegmentMetadataKeys.PAGE_START));
+            Integer pageEnd = integer(metadata.get(SegmentMetadataKeys.PAGE_END));
             information.append('[').append(citation).append("]\n")
                     .append("doc_id: ").append(known(docId)).append('\n')
                     .append("chunk_id: ").append(known(chunkId)).append('\n')
                     .append("章节: ").append(known(headerPath)).append('\n')
+                    .append("页码: ").append(formatPages(pageStart, pageEnd)).append('\n')
                     .append("来源: ").append(known(sourceUrl)).append('\n')
                     .append("正文:\n").append(candidate.text()).append("\n\n");
             references.add(new RagReference(citation, docId, chunkId,
-                    headerPath, sourceUrl, candidate.score(), candidate.rerankedScore()));
+                    headerPath, sourceUrl, pageStart, pageEnd,
+                    candidate.score(), candidate.rerankedScore()));
         }
         RagPromptTemplateRegistry.TemplateSelection selection =
                 templateRegistry.select(request.intentContext().answerMode());
@@ -109,6 +112,32 @@ public class RagPromptInjector {
     private static String stringOr(Object value, String fallback) {
         String string = string(value);
         return string == null || string.isBlank() ? fallback : string;
+    }
+
+    private static Integer integer(Object value) {
+        if (value instanceof Number number) {
+            int page = number.intValue();
+            return page > 0 ? page : null;
+        }
+        if (value == null || value.toString().isBlank()) {
+            return null;
+        }
+        try {
+            int page = Integer.parseInt(value.toString().trim());
+            return page > 0 ? page : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static String formatPages(Integer pageStart, Integer pageEnd) {
+        if (pageStart == null || pageEnd == null) {
+            return "未知";
+        }
+        if (pageStart.equals(pageEnd)) {
+            return "第 " + pageStart + " 页";
+        }
+        return "第 " + pageStart + "–" + pageEnd + " 页";
     }
 
     private static String known(String value) {

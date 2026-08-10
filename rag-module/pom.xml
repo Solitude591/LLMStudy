@@ -123,6 +123,11 @@
             <artifactId>commonmark</artifactId>
             <version>0.29.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark-ext-gfm-tables</artifactId>
+            <version>0.29.0</version>
+        </dependency>
 
         <!-- EasyExcel：Excel 流式解析（xls/xlsx），SAX 模式逐行读取，避免大文件整表加载撑爆内存 -->
         <dependency>

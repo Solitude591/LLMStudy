@@ -1,5 +1,6 @@
 package com.llmstudy.rag.module.rag;
 
+import com.llmstudy.rag.config.RerankerProperties;
 import com.llmstudy.rag.module.rag.aggregation.RetrievalAggregator;
 import com.llmstudy.rag.module.rag.model.RagRequest;
 import com.llmstudy.rag.module.rag.model.RagResult;
@@ -8,6 +9,7 @@ import com.llmstudy.rag.module.rag.model.RewrittenQuery;
 import com.llmstudy.rag.module.rag.prompt.RagPromptInjector;
 import com.llmstudy.rag.module.rag.query.QueryRewriter;
 import com.llmstudy.rag.module.rag.retrieval.HybridRetriever;
+import com.llmstudy.rag.module.rag.retrieval.ParentChunkExpander;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -15,8 +17,7 @@ import java.util.List;
 /**
  * 在线 RAG 唯一编排入口。
  *
- * <p>固定按“查询改写 → 混合检索 → 聚合/重排 → Prompt 注入”执行，
- * 各阶段通过项目自有模型交互，不依赖 Controller 或 HTTP DTO。</p>
+ * <p>固定按“查询改写 → 混合检索 → 聚合/重排 → 父片展开去重 → Top-N → Prompt 注入”执行。</p>
  */
 @Service
 public class RagPipeline {
@@ -24,35 +25,45 @@ public class RagPipeline {
     private final QueryRewriter queryRewriter;
     private final HybridRetriever hybridRetriever;
     private final RetrievalAggregator aggregator;
+    private final ParentChunkExpander parentChunkExpander;
     private final RagPromptInjector promptInjector;
+    private final RerankerProperties rerankerProperties;
 
     public RagPipeline(QueryRewriter queryRewriter,
                        HybridRetriever hybridRetriever,
                        RetrievalAggregator aggregator,
-                       RagPromptInjector promptInjector) {
+                       ParentChunkExpander parentChunkExpander,
+                       RagPromptInjector promptInjector,
+                       RerankerProperties rerankerProperties) {
         this.queryRewriter = queryRewriter;
         this.hybridRetriever = hybridRetriever;
         this.aggregator = aggregator;
+        this.parentChunkExpander = parentChunkExpander;
         this.promptInjector = promptInjector;
+        this.rerankerProperties = rerankerProperties;
     }
 
     /**
-     * 执行一次完整 RAG 处理，空候选时仍返回改写结果，Prompt 为 null。
+     * 执行一次完整 RAG：改写 → 双路检索 → 融合重排 → parent 展开 → Top-N → Prompt。
      *
-     * @param request 用户问题、会话上下文、意图注入策略和入口处捕获的访问身份
-     * @return 最终 Prompt、查询改写结果与结构化引用
+     * @return 空候选时 Prompt 为 null，但仍带改写结果
      */
     public RagResult execute(RagRequest request) {
-        // 原问题供 BM25 保留精确词面信号，改写问题供 KNN 提升语义召回。
         RewrittenQuery rewritten = queryRewriter.rewrite(request);
-        // 权限上下文随请求显式进入检索器，确保 BM25/KNN 只查询当前用户可读版本。
         HybridRetriever.RetrievalResult retrieval = hybridRetriever.retrieve(
                 rewritten, request.accessContext());
-        // 聚合器先融合双路排名，再按配置可选重排并统一截断 Top N。
-        List<RetrievalCandidate> candidates = aggregator.aggregate(rewritten, retrieval);
-        // 内容注入器负责 Prompt 模板注入和结构化引用生成
+        // 保留 candidateCount 量级，供 parent 去重后仍有足够不同章节可补位。
+        List<RetrievalCandidate> fused = aggregator.aggregate(rewritten, retrieval);
+        List<RetrievalCandidate> expanded = parentChunkExpander.expand(fused);
+        // 最终 Top-N 必须在 parent 去重之后，否则同 parent 的多个 child 会挤掉其他证据。
+        List<RetrievalCandidate> candidates = expanded.stream()
+                .limit(Math.max(1, rerankerProperties.getTopN()))
+                .toList();
         RagPromptInjector.Injection injection = promptInjector.inject(
                 request, rewritten, candidates);
-        return new RagResult(injection.prompt(), rewritten, injection.references());
+        List<String> chunks = candidates.stream()
+                .map(RetrievalCandidate::text)
+                .toList();
+        return new RagResult(injection.prompt(), rewritten, injection.references(), chunks);
     }
 }

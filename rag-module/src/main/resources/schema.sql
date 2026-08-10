@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_document_version`
     `doc_url`            VARCHAR(512) NOT NULL DEFAULT '' COMMENT '原始文件访问地址',
     `raw_object_key`     VARCHAR(512) NOT NULL DEFAULT '' COMMENT '原始文件的 MinIO object key',
     `converted_doc_url`  VARCHAR(512) NOT NULL DEFAULT '' COMMENT '解析后的 Markdown 文件地址',
+    `content_list_url`   VARCHAR(512)          DEFAULT NULL COMMENT 'MinerU content_list.json 地址，可空',
     `processing_status`  VARCHAR(32)  NOT NULL DEFAULT 'INIT' COMMENT '处理状态：INIT, UPLOADED, CONVERTING, CONVERTED, SPLITTING, CHUNKED, VECTORING, VECTOR_STORED',
     `release_status`     VARCHAR(32)  NOT NULL DEFAULT 'PREPARING' COMMENT '发布状态：PREPARING, READY, PUBLISHING, PUBLISHED, ARCHIVED',
     `error_message`      TEXT                  DEFAULT NULL COMMENT '处理失败原因',
@@ -399,3 +400,20 @@ ALTER TABLE `chat_conversation` ALTER COLUMN `status` SET DEFAULT 'ACTIVE';
 UPDATE `chat_message`
 SET `type` = UPPER(`type`)
 WHERE BINARY `type` <> BINARY UPPER(`type`);
+
+-- 兼容已存在的 knowledge_document_version：补充 content_list.json 地址列。
+SET @content_list_url_column_exists = (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'knowledge_document_version'
+      AND COLUMN_NAME = 'content_list_url'
+);
+SET @content_list_url_column_sql = IF(
+    @content_list_url_column_exists = 0,
+    'ALTER TABLE `knowledge_document_version` ADD COLUMN `content_list_url` VARCHAR(512) DEFAULT NULL COMMENT ''MinerU content_list.json 地址，可空'' AFTER `converted_doc_url`',
+    'SELECT 1'
+);
+PREPARE content_list_url_column_stmt FROM @content_list_url_column_sql;
+EXECUTE content_list_url_column_stmt;
+DEALLOCATE PREPARE content_list_url_column_stmt;

@@ -122,9 +122,9 @@ rag:
 
   splitter:
     markdown:
-      # 单个子分片最大字符数；一个标题章节超过该值时才生成父子分片
+      # 普通正文 child 最大 Unicode code point 数；图片/表格不受此限制
       chunk-size: ${RAG_MARKDOWN_CHUNK_SIZE:1000}
-      # 相邻子分片重叠字符数，必须大于等于 0 且小于 chunk-size
+      # 仅作用于普通正文 child 的重叠 code point 数，必须小于 chunk-size
       chunk-overlap: ${RAG_MARKDOWN_CHUNK_OVERLAP:100}
 
   snowflake:

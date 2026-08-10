@@ -1,6 +1,7 @@
 package com.llmstudy.rag.module.knowledge.ingestion.chunk;
 
 import com.llmstudy.rag.dto.DocumentSplitResult;
+import com.llmstudy.rag.dto.MineruContentElement;
 import com.llmstudy.rag.entity.KnowledgeDocumentVersion;
 import com.llmstudy.rag.entity.KnowledgeSegment;
 import com.llmstudy.rag.enums.DocumentStatus;
@@ -9,12 +10,12 @@ import com.llmstudy.rag.mapper.KnowledgeDocumentVersionMapper;
 import com.llmstudy.rag.mapper.KnowledgeSegmentMapper;
 import com.llmstudy.rag.module.knowledge.ingestion.DocumentStageAlreadyRunningException;
 import com.llmstudy.rag.module.knowledge.model.KnowledgeChunk;
-import com.llmstudy.rag.module.knowledge.model.SegmentMetadataKeys;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.net.URI;
@@ -24,39 +25,45 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
-/** 下载转换后的 Markdown，生成父子分片，并以事务方式持久化。 */
+/**
+ * 下载 content_list 或 Markdown，生成原子分片，并以事务方式持久化。
+ *
+ * <p>优先消费 {@code content_list_url}；缺失、下载失败或解析失败时回退 Markdown AST。</p>
+ */
 @Service
 public class DocumentChunkingService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentChunkingService.class);
     private final KnowledgeDocumentVersionMapper versionMapper;
     private final KnowledgeSegmentMapper segmentMapper;
-    private final MarkdownHeaderChunker chunker;
+    private final ContentListPaperChunker contentListChunker;
+    private final MarkdownAstPaperChunker markdownChunker;
     private final HttpClient httpClient;
     private final JsonMapper jsonMapper;
     private final TransactionTemplate transactionTemplate;
 
     public DocumentChunkingService(KnowledgeDocumentVersionMapper versionMapper,
                                    KnowledgeSegmentMapper segmentMapper,
-                                   MarkdownHeaderChunker chunker,
+                                   ContentListPaperChunker contentListChunker,
+                                   MarkdownAstPaperChunker markdownChunker,
                                    HttpClient httpClient,
                                    JsonMapper jsonMapper,
                                    PlatformTransactionManager transactionManager) {
         this.versionMapper = versionMapper;
         this.segmentMapper = segmentMapper;
-        this.chunker = chunker;
+        this.contentListChunker = contentListChunker;
+        this.markdownChunker = markdownChunker;
         this.httpClient = httpClient;
         this.jsonMapper = jsonMapper;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     /**
-     * 抢占版本分片阶段，完成 Markdown 下载、切分、入库与状态迁移。
+     * 抢占版本分片阶段，完成下载、切分、入库与状态迁移。
      *
-     * <p>已有分片时按幂等语义直接返回；新分片与 converted → chunked
-     * 状态迁移在同一数据库事务中完成。</p>
+     * <p>已有分片时按幂等直接返回；新分片与 {@code SPLITTING → CHUNKED}
+     * 在同一事务提交，避免只写一半。</p>
      *
      * @param versionId 物理版本 ID
      * @return 分片数量、最终状态和幂等命中标记
@@ -67,7 +74,7 @@ public class DocumentChunkingService {
         if (version == null) {
             throw new IllegalArgumentException("版本不存在: " + versionId);
         }
-        // 先以持久化分片作为幂等事实，用于恢复“分片已写入但事件未发布”的场景。
+        // 以 DB 分片数为幂等事实，恢复「已写入但事件未发」的场景。
         int existing = segmentMapper.countByVersionId(versionId);
         if (existing > 0) {
             if (version.getDocumentStatus() == DocumentStatus.CONVERTED) {
@@ -88,22 +95,17 @@ public class DocumentChunkingService {
         if (version.getConvertedDocUrl() == null || version.getConvertedDocUrl().isBlank()) {
             throw new IllegalStateException("版本 converted_doc_url 为空: " + versionId);
         }
-        // CAS 抢占后才进行网络下载，防止重复事件并发生成两套分片。
+        // CAS 后再下载，防止重复事件并发生成两套分片。
         if (versionMapper.compareAndSetProcessingStatus(
                 versionId, DocumentStatus.SPLITTING, previous) != 1) {
             throw new DocumentStageAlreadyRunningException("版本分片阶段已经被抢占: " + versionId);
         }
         try {
-            String markdown = download(version.getConvertedDocUrl());
-            List<KnowledgeChunk> chunks = chunker.split(markdown, Map.of(
-                    SegmentMetadataKeys.DOC_ID, version.getDocId(),
-                    SegmentMetadataKeys.VERSION_ID, versionId,
-                    SegmentMetadataKeys.SOURCE_URL, version.getConvertedDocUrl()));
+            List<KnowledgeChunk> chunks = splitVersion(version);
             if (chunks.isEmpty()) {
                 throw new IllegalStateException("版本未生成任何分片: " + versionId);
             }
             List<KnowledgeSegment> segments = toEntities(version, chunks);
-            // 分片数据与最终状态在同一个事务中提交，要么同时成功，要么同时回滚。
             transactionTemplate.executeWithoutResult(status -> {
                 int inserted = segmentMapper.batchInsert(segments);
                 if (inserted != segments.size()) {
@@ -124,29 +126,75 @@ public class DocumentChunkingService {
         }
     }
 
-    /** 通过已持久化的 converted URL 下载 UTF-8 Markdown。 */
-    private String download(String url) {
+    /** 主路径 content_list；失败或空结果时回退 Markdown AST。 */
+    private List<KnowledgeChunk> splitVersion(KnowledgeDocumentVersion version) {
+        List<KnowledgeChunk> fromContentList = trySplitContentList(version);
+        if (!fromContentList.isEmpty()) {
+            return fromContentList;
+        }
+        log.info("回退 Markdown AST 分片: versionId={}", version.getVersionId());
+        String markdown = downloadText(version.getConvertedDocUrl());
+        return markdownChunker.split(markdown);
+    }
+
+    /**
+     * 尝试 content_list 分片。任何下载/解析/空结果都返回空列表，由调用方回退，
+     * 不把 content_list 故障升级为整版本失败。
+     */
+    private List<KnowledgeChunk> trySplitContentList(KnowledgeDocumentVersion version) {
+        String contentListUrl = version.getContentListUrl();
+        if (contentListUrl == null || contentListUrl.isBlank()) {
+            return List.of();
+        }
         try {
-            HttpResponse<byte[]> response = httpClient.send(HttpRequest.newBuilder()
-                    .uri(URI.create(url)).header("Accept", "text/markdown,text/plain,*/*")
-                    .GET().build(), HttpResponse.BodyHandlers.ofByteArray());
-            if (response.statusCode() != 200) {
-                throw new IllegalStateException("Markdown 下载失败，HTTP status=" + response.statusCode());
+            String json = downloadText(contentListUrl);
+            List<MineruContentElement> elements = jsonMapper.readValue(
+                    json, new TypeReference<List<MineruContentElement>>() {
+                    });
+            if (elements == null || elements.isEmpty()) {
+                log.warn("content_list 为空，回退 Markdown: versionId={}", version.getVersionId());
+                return List.of();
             }
-            String markdown = new String(response.body(), StandardCharsets.UTF_8);
-            if (markdown.isBlank()) {
-                throw new IllegalStateException("下载到的 Markdown 内容为空");
+            List<KnowledgeChunk> chunks = contentListChunker.split(elements);
+            if (chunks.isEmpty()) {
+                log.warn("content_list 未产出分片，回退 Markdown: versionId={}",
+                        version.getVersionId());
             }
-            return markdown;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Markdown 下载被中断", e);
+            return chunks;
         } catch (Exception e) {
-            throw new RuntimeException("读取转换后 Markdown 失败: " + url, e);
+            log.warn("content_list 下载或解析失败，回退 Markdown: versionId={}, cause={}",
+                    version.getVersionId(), e.toString());
+            return List.of();
         }
     }
 
-    /** 将框架无关分片转换为 MySQL 实体，在适配器边界序列化 metadata。 */
+    /** 下载 UTF-8 文本（Markdown 或 content_list JSON）。 */
+    private String downloadText(String url) {
+        try {
+            HttpResponse<byte[]> response = httpClient.send(HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Accept", "application/json,text/markdown,text/plain,*/*")
+                    .GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+            if (response.statusCode() != 200) {
+                throw new IllegalStateException("下载失败，HTTP status=" + response.statusCode());
+            }
+            String body = new String(response.body(), StandardCharsets.UTF_8);
+            if (body.isBlank()) {
+                throw new IllegalStateException("下载到的内容为空");
+            }
+            return body;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("下载被中断", e);
+        } catch (Exception e) {
+            throw new RuntimeException("读取远程内容失败: " + url, e);
+        }
+    }
+
+    /**
+     * 转为 MySQL 实体。doc_id/version_id/skip_embedding 走独立列，
+     * metadata JSON 仅保留精简结构字段。
+     */
     private List<KnowledgeSegment> toEntities(KnowledgeDocumentVersion version,
                                               List<KnowledgeChunk> chunks) {
         List<KnowledgeSegment> segments = new ArrayList<>(chunks.size());

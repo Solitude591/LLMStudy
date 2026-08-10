@@ -18,6 +18,7 @@ public class KnowledgeDocumentVersion {
     private String docUrl;
     private String rawObjectKey;
     private String convertedDocUrl;
+    private String contentListUrl;
     private String processingStatus;
     private String releaseStatus;
     private String errorMessage;
@@ -106,6 +107,14 @@ public class KnowledgeDocumentVersion {
 
     public void setConvertedDocUrl(String convertedDocUrl) {
         this.convertedDocUrl = convertedDocUrl;
+    }
+
+    public String getContentListUrl() {
+        return contentListUrl;
+    }
+
+    public void setContentListUrl(String contentListUrl) {
+        this.contentListUrl = contentListUrl;
     }
 
     public String getProcessingStatus() {

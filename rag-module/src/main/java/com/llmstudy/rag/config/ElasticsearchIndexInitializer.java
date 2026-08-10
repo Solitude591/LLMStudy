@@ -26,7 +26,7 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
             LoggerFactory.getLogger(ElasticsearchIndexInitializer.class);
     private static final String MAPPING_RESOURCE =
             "elasticsearch/know-engine-mapping.json";
-    private static final int SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
 
     private final ElasticsearchClient client;
     private final ElasticsearchProperties properties;
@@ -49,6 +49,8 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
 
         if (!indexExists(indexName)) {
             createIndex(indexName);
+        } else {
+            maybeUpgradeSchema(indexName);
         }
         validateIndex(indexName);
         log.info("Elasticsearch 索引已就绪: index={}, schemaVersion={}, dimensions={}",
@@ -70,7 +72,6 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
             }
             log.info("Elasticsearch 索引创建完成: {}", indexName);
         } catch (ElasticsearchException exception) {
-            // 多实例同时启动时，另一个实例可能在 exists 与 create 之间完成创建。
             if ("resource_already_exists_exception".equals(exception.error().type())) {
                 log.info("Elasticsearch 索引已由其他实例创建: {}", indexName);
                 return;
@@ -79,7 +80,36 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
         }
     }
 
-    /** 已存在的索引必须匹配当前 schema，禁止悄悄沿用旧动态 mapping。 */
+    /** schema 1 → 2：为 strict metadata 追加页码字段并更新 schema_version。 */
+    private void maybeUpgradeSchema(String indexName) throws Exception {
+        IndexMappingRecord record = client.indices()
+                .getMapping(request -> request.index(indexName))
+                .get(indexName);
+        if (record == null) {
+            return;
+        }
+        JsonData schemaVersion = record.mappings().meta().get("schema_version");
+        Integer actual = schemaVersion == null ? null : schemaVersion.to(Integer.class);
+        if (Objects.equals(actual, SCHEMA_VERSION)) {
+            return;
+        }
+        if (!Objects.equals(actual, 1)) {
+            return;
+        }
+        client.indices().putMapping(request -> request
+                .index(indexName)
+                .properties("metadata", metadata -> metadata.object(object -> object
+                        .properties("page_start", page -> page.integer(integer -> integer
+                                .index(false)
+                                .docValues(false)))
+                        .properties("page_end", page -> page.integer(integer -> integer
+                                .index(false)
+                                .docValues(false)))))
+                .meta("schema_version", JsonData.of(SCHEMA_VERSION)));
+        log.info("Elasticsearch 索引 schema 已升级: index={}, {} -> {}",
+                indexName, actual, SCHEMA_VERSION);
+    }
+
     private void validateIndex(String indexName) throws Exception {
         IndexMappingRecord record = client.indices()
                 .getMapping(request -> request.index(indexName))
@@ -122,8 +152,10 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
         requireKeyword(indexName, metadataFields, "parent_chunk_id");
         requireKeyword(indexName, metadataFields, "header_path");
         requireKeyword(indexName, metadataFields, "source_url");
-        require(indexName, metadataFields.size() == 5,
-                "metadata 只能包含约定的 5 个字段，实际为 " + metadataFields.keySet());
+        requireInteger(indexName, metadataFields, "page_start");
+        requireInteger(indexName, metadataFields, "page_end");
+        require(indexName, metadataFields.size() == 7,
+                "metadata 只能包含约定的 7 个字段，实际为 " + metadataFields.keySet());
     }
 
     private static void requireKeyword(String indexName,
@@ -143,6 +175,14 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
         Property keyword = property.text().fields().get("keyword");
         require(indexName, keyword != null && keyword.isKeyword(),
                 "metadata." + fieldName + ".keyword 必须存在且为 keyword");
+    }
+
+    private static void requireInteger(String indexName,
+                                       Map<String, Property> fields,
+                                       String fieldName) {
+        Property property = fields.get(fieldName);
+        require(indexName, property != null && property.isInteger(),
+                "metadata." + fieldName + " 必须为 integer");
     }
 
     private static void require(String indexName, boolean condition, String message) {

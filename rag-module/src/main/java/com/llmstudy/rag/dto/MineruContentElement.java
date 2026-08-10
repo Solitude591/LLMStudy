@@ -56,6 +56,10 @@ public class MineruContentElement {
     @JsonProperty("table_caption")
     private List<String> tableCaption;
 
+    /** 表格脚注（显著性、缩写说明等） */
+    @JsonProperty("table_footnote")
+    private List<String> tableFootnote;
+
     /** 图表标题（MinerU 的 chart 类型使用该字段，而不是 image_caption） */
     @JsonProperty("chart_caption")
     private List<String> chartCaption;
@@ -208,6 +212,14 @@ public class MineruContentElement {
 
     public void setTableCaption(List<String> tableCaption) {
         this.tableCaption = tableCaption;
+    }
+
+    public List<String> getTableFootnote() {
+        return tableFootnote;
+    }
+
+    public void setTableFootnote(List<String> tableFootnote) {
+        this.tableFootnote = tableFootnote;
     }
 
     public List<String> getChartCaption() {

@@ -1,5 +1,7 @@
 package com.llmstudy.rag.module.chat.flow;
 
+import com.llmstudy.rag.enums.ChatProgressStage;
+import com.llmstudy.rag.enums.RagProgressStage;
 import com.llmstudy.rag.module.rag.RagPipeline;
 import com.llmstudy.rag.module.rag.model.RagRequest;
 import com.llmstudy.rag.module.rag.model.RagResult;
@@ -15,6 +17,8 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.function.Consumer;
 
 /** RAG 聊天 Flow：负责转换聊天上下文，检索编排统一委托给 {@link RagPipeline}。 */
 @Component
@@ -28,17 +32,48 @@ public class RagChatFlow implements ChatFlow {
         this.pipeline = pipeline;
     }
 
-    /** 执行 RAG Pipeline，并把改写问题和引用交回聊天编排层持久化。 */
+    /**
+     * 无进度回调的兼容入口：委托给带回调版本，并传入空操作 Consumer。
+     * Dataset / 单测等不关心进度的调用方可继续使用本方法。
+     */
     @Override
     public FlowPreparation prepare(ChatFlowContext context) {
+        return prepare(context, stage -> { });
+    }
+
+    /**
+     * 执行 RAG Pipeline，并把改写问题和引用交回聊天编排层持久化。
+     *
+     * <p>{@code progress} 使用聊天层 {@link ChatProgressStage}。Pipeline 内部
+     * 上报的是 {@link RagProgressStage}，此处做一对一映射后向上传递，
+     * 避免 rag 模块依赖 chat 包。</p>
+     */
+    @Override
+    public FlowPreparation prepare(ChatFlowContext context,
+                                   Consumer<ChatProgressStage> progress) {
+        Objects.requireNonNull(progress, "progress");
         // 将请求入口捕获的身份继续传给 RAG Pipeline；此处可能已经不在原 HTTP 线程。
         RagResult result = pipeline.execute(new RagRequest(
-                context.query(), formatHistory(context.history()), toRagIntent(context.intent()),
-                context.accessContext()));
+                        context.query(), formatHistory(context.history()),
+                        toRagIntent(context.intent()), context.accessContext()),
+                // 适配器：RAG 内部阶段 → 聊天对外阶段，再交给上层 Consumer
+                ragProgressStage -> progress.accept(toChatProgress(ragProgressStage)));
         // 空检索结果不再请求 LLM，避免模型在无证据时自由发挥。
         return new FlowPreparation(result.prompt(),
                 result.rewrittenQuery().rewrittenQuestion(), result.references(),
                 result.empty() ? NO_KNOWLEDGE_ANSWER : null);
+    }
+
+    /**
+     * 将 Pipeline 内部阶段映射为聊天 SSE 可识别的对外阶段。
+     * 枚举名保持一致，便于日志对齐；文案只存在于 ChatProgressStage。
+     */
+    private static ChatProgressStage toChatProgress(RagProgressStage stage) {
+        return switch (stage) {
+            case QUESTION_ANALYSIS -> ChatProgressStage.QUESTION_ANALYSIS;
+            case KNOWLEDGE_RETRIEVAL -> ChatProgressStage.KNOWLEDGE_RETRIEVAL;
+            case EVIDENCE_ORGANIZATION -> ChatProgressStage.EVIDENCE_ORGANIZATION;
+        };
     }
 
     /** 将 Chat 意图转换为 RAG 自有策略，避免 RAG 模块反向依赖 Chat。 */

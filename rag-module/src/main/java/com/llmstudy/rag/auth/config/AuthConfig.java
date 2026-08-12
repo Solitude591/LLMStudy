@@ -27,7 +27,7 @@ public class AuthConfig implements WebMvcConfigurer {
      */
     private static final String[] PUBLIC_PATHS = {
             "/auth/login", "/", "/index.html", "/login.html", "/chat.html",
-            "/upload.html", "/css/**", "/js/**", "/favicon.ico", "/error"
+            "/upload.html", "/css/**", "/js/**", "/vendor/**", "/favicon.ico", "/error"
     };
 
     /**

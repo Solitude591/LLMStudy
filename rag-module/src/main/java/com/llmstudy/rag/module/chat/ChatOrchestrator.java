@@ -3,6 +3,7 @@ package com.llmstudy.rag.module.chat;
 import com.llmstudy.rag.config.ChatProperties;
 import com.llmstudy.rag.entity.ChatConversation;
 import com.llmstudy.rag.entity.ChatMessage;
+import com.llmstudy.rag.enums.ChatProgressStage;
 import com.llmstudy.rag.enums.MessageType;
 import com.llmstudy.rag.module.chat.conversation.ConversationService;
 import com.llmstudy.rag.module.chat.flow.ChatFlow;
@@ -25,7 +26,9 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Service;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 import tools.jackson.databind.json.JsonMapper;
@@ -33,6 +36,8 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * 聊天应用编排器，统一处理会话加载、意图路由、消息落库与模型调用。
@@ -108,20 +113,41 @@ public class ChatOrchestrator {
         return new ChatBase(command, conversation, userMessage, history);
     }
 
-    /** 根据意图选择聊天 Flow，并回写识别 metadata 与查询改写结果。 */
+    /**
+     * 无进度回调的路由入口；同步 ask / prepare 等场景使用。
+     * 内部传入空操作 Consumer，不向任何下游推送进度。
+     */
     private ChatPreparation route(ChatBase base, boolean routeIntent) {
+        return route(base, routeIntent, stage -> { });
+    }
+
+    /**
+     * 根据意图选择聊天 Flow，并回写识别 metadata 与查询改写结果。
+     *
+     * @param progress 阶段回调；流式入口会把它接到 Reactor sink，用于发 PROGRESS 事件
+     */
+    private ChatPreparation route(ChatBase base, boolean routeIntent,
+                                  Consumer<ChatProgressStage> progress) {
         try (LlmTraceContext ignored = LlmTraceContext.open(
                 base.conversation().getConversationId(),
                 base.userMessage().getMessageId())) {
-            return routeWithinTrace(base, routeIntent);
+            return routeWithinTrace(base, routeIntent, progress);
         }
     }
 
-    /** 在已建立日志关联上下文的条件下执行意图识别和 RAG 路由。 */
-    private ChatPreparation routeWithinTrace(ChatBase base, boolean routeIntent) {
+    /**
+     * 在已建立日志关联上下文的条件下执行意图识别和 RAG 路由。
+     *
+     * <p>进度约定：在真实耗时步骤<strong>开始前</strong>调用 {@code progress.accept}。
+     * CommonChatFlow 会忽略回调中的 RAG 阶段；RagChatFlow 会在 Pipeline 边界继续上报。</p>
+     */
+    private ChatPreparation routeWithinTrace(ChatBase base, boolean routeIntent,
+                                             Consumer<ChatProgressStage> progress) {
         ChatFlow flow = commonChatFlow;
         IntentRecognitionResult intent = null;
         if (routeIntent) {
+            // 意图识别可能调用 LLM，先发进度再阻塞等待结果
+            progress.accept(ChatProgressStage.INTENT_RECOGNITION);
             intent = intentRecognizer.recognize(
                     base.command().query(), base.history());
             persistIntentMetadata(base.userMessage().getMessageId(), intent);
@@ -130,14 +156,17 @@ public class ChatOrchestrator {
                 flow = ragChatFlow;
             }
         }
+        // 必须把同一个 progress 继续传给 Flow，否则 RAG 中间阶段无法冒泡到 SSE。
         // 身份快照与问题、历史一起进入 Flow，后续异步步骤不再读取 Sa-Token ThreadLocal。
         ChatFlow.FlowPreparation flowPreparation = flow.prepare(new ChatFlowContext(
                 base.command().query(), base.history(), intent,
-                base.command().accessContext()));
+                base.command().accessContext()), progress);
         if (flowPreparation.rewrittenQuery() != null) {
             conversationService.updateMessageTransformContent(
                     base.userMessage().getMessageId(), flowPreparation.rewrittenQuery());
         }
+        // Flow 已产出 Prompt / 固定回答，下一步进入最终模型或固定答案输出
+        progress.accept(ChatProgressStage.ANSWER_GENERATION);
         return new ChatPreparation(base.conversation().getConversationId(),
                 base.conversation().getTitle(), base.userMessage().getMessageId(), base.history(),
                 flowPreparation.prompt(), flowPreparation.references(),
@@ -145,21 +174,61 @@ public class ChatOrchestrator {
     }
 
     /**
-     * 执行意图路由后的流式聊天，保证内部事件顺序为 START、DELTA、DONE。
+     * 执行意图路由后的流式聊天。
+     *
+     * <p>事件顺序：START →（零或多条 PROGRESS）→ DELTA… → DONE。
+     * 准备阶段用短生命周期的 {@link Flux#create} 仅推送少量 PROGRESS；
+     * 模型流通过 {@code concatWith + defer} 接入，保留下游背压，避免嵌套
+     * {@code subscribe} 向模型请求 {@code Long.MAX_VALUE}。</p>
      *
      * @param command 聊天命令
      * @return 可由 Controller 映射为 SSE 响应的事件流
      */
     public Flux<ChatStreamEvent> stream(ChatCommand command) {
+        // 同步完成会话解析与用户消息落库，便于 START 立刻带上 conversationId / userMessageId
         ChatBase base = initialize(command);
         ChatPreparation start = new ChatPreparation(
                 base.conversation().getConversationId(), base.conversation().getTitle(),
                 base.userMessage().getMessageId(), base.history(), null, List.of(), null);
-        // 意图识别、查询改写和检索包含阻塞调用，统一切到弹性线程池。
-        Flux<ChatStreamEvent> routed = Mono.fromCallable(() -> route(base, true))
-                .subscribeOn(Schedulers.boundedElastic())
-                .flatMapMany(streamExecutor::execute);
-        return Flux.just(ChatStreamEvent.start(start)).concatWith(routed);
+        // 准备阶段结束后供 concat 第二段读取；在 complete 之前写入，与订阅线程 happens-before。
+        AtomicReference<ChatPreparation> prepared = new AtomicReference<>();
+
+        // 仅承载准备期 PROGRESS（最多 5 条），有界缓冲足够；不在此处订阅模型流。
+        Flux<ChatStreamEvent> progressFlux = Flux.<ChatStreamEvent>create(sink -> {
+            Disposable prepareTask = Schedulers.boundedElastic().schedule(() -> {
+                try {
+                    // Consumer：下层 accept(阶段) → 这里写成 PROGRESS 事件
+                    Consumer<ChatProgressStage> progress = stage -> {
+                        if (!sink.isCancelled()) {
+                            sink.next(ChatStreamEvent.progress(start, stage));
+                        }
+                    };
+                    ChatPreparation preparation = route(base, true, progress);
+                    if (sink.isCancelled()) {
+                        return;
+                    }
+                    prepared.set(preparation);
+                    sink.complete();
+                } catch (Throwable error) {
+                    if (!sink.isCancelled()) {
+                        sink.error(error);
+                    }
+                }
+            });
+            sink.onCancel(prepareTask::dispose);
+        }, FluxSink.OverflowStrategy.BUFFER);
+
+        // START → 进度 → 模型 DELTA/DONE；后两段串行，模型段走操作符链传 demand
+        return Flux.concat(
+                Flux.just(ChatStreamEvent.start(start)),
+                progressFlux.concatWith(Flux.defer(() -> {
+                    ChatPreparation preparation = prepared.get();
+                    if (preparation == null) {
+                        return Flux.error(new IllegalStateException(
+                                "流式准备完成但缺少 ChatPreparation"));
+                    }
+                    return streamExecutor.execute(preparation);
+                })));
     }
 
     /**

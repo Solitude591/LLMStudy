@@ -3,7 +3,6 @@
 
     const TITLE_SYNC_MAX_ATTEMPTS = 12;
     const TITLE_SYNC_INTERVAL_MS = 1_000;
-    const DOCUMENT_STORAGE_KEY = "rag-studio-tracked-documents-v1";
     const DOCUMENT_POLL_INTERVAL_MS = 4_000;
     const DOCUMENT_PROCESSING_STEPS = [
         "UPLOADED", "CONVERTING", "CONVERTED", "SPLITTING",
@@ -11,6 +10,62 @@
     ];
     // 聊天页所有业务请求统一经过认证封装，自动附加 Bearer Token 并处理 401。
     const authFetch = (url, options = {}) => RagAuth.fetch(url, options);
+
+    const MARKDOWN_ALLOWED_TAGS = [
+        "p", "br", "strong", "em", "del", "blockquote", "code", "pre",
+        "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "a", "hr",
+        "table", "thead", "tbody", "tr", "th", "td", "img", "input"
+    ];
+    const MARKDOWN_ALLOWED_ATTRIBUTES = [
+        "href", "title", "class", "src", "alt", "align", "type", "disabled", "checked"
+    ];
+
+    // marked + DOMPurify 由 chat.html 中的本地 vendor 脚本注入，页面不依赖外部 CDN。
+    const markdownAvailable = typeof window.marked?.parse === "function"
+        && typeof window.DOMPurify?.sanitize === "function";
+    if (markdownAvailable) {
+        window.marked.setOptions({ gfm: true, breaks: true });
+    } else {
+        console.warn("Markdown 渲染依赖未加载，assistant 消息将按纯文本显示");
+    }
+
+    /**
+     * 渲染单条聊天消息。assistant 回答使用 GFM，用户输入始终作为纯文本处理。
+     * Markdown 生成的 HTML 必须先经 DOMPurify 白名单清洗后才能写入 DOM。
+     * 流式 PROGRESS 仅在尚无正文时展示，不写入 content。
+     */
+    function renderMessageContent(el, message) {
+        const showingProgress = message.role === "assistant"
+            && message.pending
+            && !message.content
+            && Boolean(message.progressMessage);
+        const raw = message.content
+            || (showingProgress ? message.progressMessage
+                : (message.pending ? "正在思考…" : ""));
+        const canRenderMarkdown = message.role === "assistant"
+            && Boolean(message.content)
+            && markdownAvailable;
+        el.classList.toggle("is-markdown", canRenderMarkdown);
+        el.classList.toggle("is-plain-text", !canRenderMarkdown);
+        el.classList.toggle("is-progress", showingProgress);
+        if (canRenderMarkdown) {
+            const parsed = window.marked.parse(raw);
+            // 限定为 Markdown 需要的展示标签，禁止模型输出表单、脚本等交互内容。
+            el.innerHTML = window.DOMPurify.sanitize(parsed, {
+                ALLOWED_TAGS: MARKDOWN_ALLOWED_TAGS,
+                ALLOWED_ATTR: MARKDOWN_ALLOWED_ATTRIBUTES
+            });
+            // 外部链接使用新窗口打开，并隔离 opener 以防止反向标签页劫持。
+            el.querySelectorAll("a[href]").forEach(link => {
+                if (["http:", "https:"].includes(link.protocol)) {
+                    link.target = "_blank";
+                    link.rel = "noopener noreferrer";
+                }
+            });
+        } else {
+            el.textContent = raw;
+        }
+    }
 
     const elements = {
         sidebar: document.querySelector("#sidebar"),
@@ -149,6 +204,10 @@
         return apiUrl(`/document/${encodeURIComponent(docId)}`);
     }
 
+    function documentListEndpoint() {
+        return apiUrl("/document/list");
+    }
+
     function documentVersionsEndpoint(docId) {
         return `${documentEndpoint(docId)}/versions`;
     }
@@ -193,6 +252,7 @@
             messageId: item.messageId ?? null,
             role: item.type === "USER" ? "user" : "assistant",
             content: item.content ?? "",
+            progressMessage: null,
             pending: false,
             failed: false,
             tokenCount: item.tokenCount ?? null,
@@ -382,11 +442,14 @@
         time.className = "message-time";
         time.textContent = messageTime(message.createdAt);
         author.append(time);
-        const content = document.createElement("p");
+        const content = document.createElement("div");
         content.className = "message-content";
         if (message.pending) content.classList.add("is-streaming");
         if (message.failed) content.classList.add("is-error");
-        content.textContent = message.content || (message.pending ? "正在思考…" : "");
+        if (message.pending && !message.content && message.progressMessage) {
+            content.classList.add("is-progress");
+        }
+        renderMessageContent(content, message);
         body.append(author, content);
 
         if (message.role === "assistant" && !message.pending) {
@@ -419,39 +482,6 @@
         return `${value.slice(0, 8)}…${value.slice(-6)}`;
     }
 
-    function loadStoredDocuments() {
-        try {
-            const stored = JSON.parse(window.localStorage.getItem(DOCUMENT_STORAGE_KEY) || "[]");
-            if (!Array.isArray(stored)) return;
-            state.documents = stored
-                .filter(item => item && typeof item.docId === "string" && item.docId.trim())
-                .map(item => ({
-                    docId: item.docId.trim(),
-                    docTitle: item.docTitle?.trim() || "未命名文档",
-                    visibility: item.visibility || "PRIVATE",
-                    versions: [],
-                    loading: true,
-                    error: null
-                }));
-            state.activeDocumentId = state.documents[0]?.docId ?? null;
-        } catch (error) {
-            console.warn("读取本地文档列表失败", error);
-        }
-    }
-
-    function persistDocuments() {
-        try {
-            const serializable = state.documents.map(document => ({
-                docId: document.docId,
-                docTitle: document.docTitle,
-                visibility: document.visibility
-            }));
-            window.localStorage.setItem(DOCUMENT_STORAGE_KEY, JSON.stringify(serializable));
-        } catch (error) {
-            console.warn("保存本地文档列表失败", error);
-        }
-    }
-
     function upsertDocument(metadata, versions = null, select = false) {
         if (!metadata?.docId) return null;
         let document = state.documents.find(item => item.docId === metadata.docId);
@@ -472,7 +502,6 @@
         document.error = null;
         if (Array.isArray(versions)) document.versions = versions;
         if (select || !state.activeDocumentId) state.activeDocumentId = document.docId;
-        persistDocuments();
         return document;
     }
 
@@ -502,15 +531,46 @@
         }
     }
 
-    async function refreshTrackedDocuments() {
-        const ids = state.documents.map(document => document.docId);
-        if (ids.length === 0) {
+    /**
+     * 从服务端（MySQL）拉取当前用户可读文档，再补齐各文档版本详情。
+     * 不再使用 localStorage，清库后刷新页面列表会同步为空。
+     */
+    async function loadDocumentsFromServer() {
+        clearKnowledgeError();
+        const previousActiveId = state.activeDocumentId;
+        try {
+            const response = await authFetch(documentListEndpoint(), {
+                headers: { "Accept": "application/json" }
+            });
+            const list = await readJsonResponse(response);
+            const documents = Array.isArray(list) ? list : [];
+            state.documents = documents
+                .filter(item => item && typeof item.docId === "string" && item.docId.trim())
+                .map(item => ({
+                    docId: item.docId.trim(),
+                    docTitle: item.docTitle?.trim() || "未命名文档",
+                    visibility: item.visibility || "PRIVATE",
+                    versions: [],
+                    loading: true,
+                    error: null
+                }));
+            state.activeDocumentId = state.documents.find(item => item.docId === previousActiveId)?.docId
+                ?? state.documents[0]?.docId
+                ?? null;
             renderKnowledge();
-            return;
+            if (state.documents.length > 0) {
+                await Promise.allSettled(
+                    state.documents.map(document => refreshDocument(document.docId, true))
+                );
+            }
+            renderKnowledge();
+            startDocumentPolling();
+        } catch (error) {
+            state.documents = [];
+            state.activeDocumentId = null;
+            showKnowledgeError(error.message);
+            renderKnowledge();
         }
-        await Promise.allSettled(ids.map(docId => refreshDocument(docId, true)));
-        renderKnowledge();
-        startDocumentPolling();
     }
 
     function showKnowledgeError(message) {
@@ -739,10 +799,10 @@
         if (visibleDocuments.length === 0) {
             const empty = documentNode("div", "document-empty");
             empty.append(
-                documentNode("strong", null, keyword ? "没有匹配的文档" : "还没有关联文档"),
+                documentNode("strong", null, keyword ? "没有匹配的文档" : "还没有文档"),
                 documentNode("span", null, keyword
                     ? "可以按标题或完整 docId 搜索。"
-                    : "上传首个文件，或输入已有 docId 继续管理版本。")
+                    : "上传首个文件，或输入已有 docId 打开详情。")
             );
             elements.documentList.append(empty);
             return;
@@ -906,7 +966,7 @@
     async function attachDocument() {
         const docId = elements.attachDocumentId.value.trim();
         if (!docId || state.documentBusy) {
-            if (!docId) showKnowledgeError("请输入需要关联的 docId。");
+            if (!docId) showKnowledgeError("请输入需要打开的 docId。");
             return;
         }
         clearKnowledgeError();
@@ -926,7 +986,7 @@
         try {
             await refreshDocument(docId, true);
             elements.attachDocumentId.value = "";
-            showToast("文档已关联到当前工作台");
+            showToast("已打开文档详情");
         } catch (error) {
             if (!existing) state.documents = state.documents.filter(document => document.docId !== docId);
             state.activeDocumentId = state.documents[0]?.docId ?? null;
@@ -988,9 +1048,11 @@
             return;
         }
         const content = row.querySelector(".message-content");
-        content.textContent = message.content || (message.pending ? "正在思考…" : "");
+        renderMessageContent(content, message);
         content.classList.toggle("is-streaming", Boolean(message.pending));
         content.classList.toggle("is-error", Boolean(message.failed));
+        content.classList.toggle("is-progress",
+            Boolean(message.pending && !message.content && message.progressMessage));
         scrollToBottom();
     }
 
@@ -1107,6 +1169,7 @@
             messageId: null,
             role,
             content,
+            progressMessage: null,
             pending,
             failed: false,
             tokenCount: null,
@@ -1153,6 +1216,7 @@
             elements.connectionDot.classList.remove("is-error");
             setStatus("请求完成", "ready");
         } catch (error) {
+            assistantMessage.progressMessage = null;
             if (error.name === "AbortError") {
                 assistantMessage.content = assistantMessage.content || "已停止生成。";
                 setStatus("已停止", "ready");
@@ -1164,6 +1228,7 @@
                 showError(error.message);
             }
             assistantMessage.pending = false;
+            updateMessageNode(assistantMessage);
         } finally {
             state.abortController = null;
             setBusy(false);
@@ -1222,15 +1287,31 @@
                     renderConversationHeader();
                     renderSessions();
                     break;
-                case "DELTA":
-                    assistantMessage.content += event.content ?? "";
+                case "PROGRESS":
+                    // 进度不写入回答正文；已有非空回答后忽略后续进度。
+                    if (!assistantMessage.content) {
+                        assistantMessage.progressMessage = event.progressMessage || "";
+                        updateMessageNode(assistantMessage);
+                    }
+                    break;
+                case "DELTA": {
+                    // 模型常先推 metadata-only 空分片；空 content 不得清掉真实进度。
+                    const chunk = event.content ?? "";
+                    if (!chunk) {
+                        break;
+                    }
+                    assistantMessage.progressMessage = null;
+                    assistantMessage.content += chunk;
                     updateMessageNode(assistantMessage);
                     break;
+                }
                 case "DONE":
+                    assistantMessage.progressMessage = null;
                     assistantMessage.messageId = event.assistantMessageId;
                     assistantMessage.tokenCount = event.tokenCount ?? null;
                     assistantMessage.modelName = event.modelName ?? null;
                     assistantMessage.pending = false;
+                    updateMessageNode(assistantMessage);
                     receivedDone = true;
                     break;
                 default:
@@ -1504,13 +1585,16 @@
             'option[value="ORGANIZATION"]');
         // 没有组织归属时禁用组织可见选项，后端仍会进行同样的强制校验。
         organizationOption.disabled = !state.currentUser.organizationId;
-        loadStoredDocuments();
+        // 清理旧版 localStorage 缓存，避免与服务端列表混淆。
+        try {
+            window.localStorage.removeItem("rag-studio-tracked-documents-v1");
+        } catch (_) { /* ignore */ }
         bindEvents();
         setMode(state.mode);
         resizeComposer();
         syncKnowledgePanelState();
         renderKnowledge();
-        void refreshTrackedDocuments();
+        void loadDocumentsFromServer();
         setStatus("正在读取会话", "busy");
         try {
             await refreshConversations();

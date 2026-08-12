@@ -570,7 +570,6 @@ select:focus-visible {
     font-size: 14px;
     line-height: 1.7;
     overflow-wrap: anywhere;
-    white-space: pre-wrap;
 }
 
 .message-row.is-user .message-content {
@@ -579,6 +578,135 @@ select:focus-visible {
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--radius);
+    white-space: pre-wrap;
+}
+
+.message-content.is-plain-text {
+    white-space: pre-wrap;
+}
+
+.message-content > :first-child {
+    margin-top: 0;
+}
+
+.message-content > :last-child {
+    margin-bottom: 0;
+}
+
+.message-content h1,
+.message-content h2,
+.message-content h3,
+.message-content h4,
+.message-content h5,
+.message-content h6 {
+    margin: 1em 0 0.4em;
+    font-weight: 650;
+    line-height: 1.35;
+    color: var(--text);
+}
+
+.message-content h1 { font-size: 1.35em; }
+.message-content h2 { font-size: 1.2em; }
+.message-content h3 { font-size: 1.08em; }
+.message-content h4 { font-size: 1em; }
+.message-content h5 { font-size: 0.95em; }
+.message-content h6 { font-size: 0.9em; }
+
+.message-content p {
+    margin: 0.55em 0;
+}
+
+.message-content ul,
+.message-content ol {
+    margin: 0.55em 0;
+    padding-left: 1.4em;
+}
+
+.message-content li {
+    margin: 0.2em 0;
+}
+
+.message-content li > ul,
+.message-content li > ol {
+    margin: 0.15em 0;
+}
+
+.message-content input[type="checkbox"] {
+    margin: 0 0.4em 0 0;
+    vertical-align: -1px;
+}
+
+.message-content blockquote {
+    margin: 0.7em 0;
+    padding: 0.15em 0 0.15em 0.9em;
+    border-left: 3px solid var(--line);
+    color: var(--muted);
+}
+
+.message-content a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.message-content img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0.7em 0;
+    border-radius: var(--radius);
+}
+
+.message-content code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9em;
+    padding: 0.1em 0.35em;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+}
+
+.message-content pre {
+    margin: 0.7em 0;
+    padding: 10px 12px;
+    overflow-x: auto;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.message-content pre code {
+    padding: 0;
+    background: transparent;
+    border: 0;
+    font-size: 0.85em;
+    line-height: 1.55;
+}
+
+.message-content table {
+    margin: 0.7em 0;
+    border-collapse: collapse;
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.message-content th,
+.message-content td {
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    text-align: left;
+}
+
+.message-content th {
+    background: var(--surface);
+    font-weight: 600;
+}
+
+.message-content hr {
+    margin: 1em 0;
+    border: 0;
+    border-top: 1px solid var(--line);
 }
 
 .message-content.is-streaming::after {
@@ -590,6 +718,10 @@ select:focus-visible {
     vertical-align: -2px;
     background: var(--accent);
     animation: cursor-blink 700ms steps(1) infinite;
+}
+
+.message-content.is-progress {
+    color: var(--muted);
 }
 
 @keyframes cursor-blink {

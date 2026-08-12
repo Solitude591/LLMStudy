@@ -1,6 +1,7 @@
 package com.llmstudy.rag.module.rag;
 
 import com.llmstudy.rag.config.RerankerProperties;
+import com.llmstudy.rag.enums.RagProgressStage;
 import com.llmstudy.rag.module.llm.model.LlmPrompt;
 import com.llmstudy.rag.module.rag.aggregation.RetrievalAggregator;
 import com.llmstudy.rag.module.rag.model.RagReference;
@@ -15,8 +16,10 @@ import com.llmstudy.rag.module.rag.retrieval.ParentChunkExpander;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -131,5 +134,52 @@ class RagPipelineTest {
 
         assertTrue(result.empty());
         assertEquals(List.of(), result.chunks());
+    }
+
+    @Test
+    void progressCallbacksMatchRewriteRetrieveAggregateOrder() {
+        QueryRewriter rewriter = mock(QueryRewriter.class);
+        HybridRetriever retriever = mock(HybridRetriever.class);
+        RetrievalAggregator aggregator = mock(RetrievalAggregator.class);
+        ParentChunkExpander expander = mock(ParentChunkExpander.class);
+        RagPromptInjector injector = mock(RagPromptInjector.class);
+        RerankerProperties properties = new RerankerProperties();
+        RagRequest request = new RagRequest("original", "history");
+        RewrittenQuery rewritten = new RewrittenQuery("original", "rewritten");
+        HybridRetriever.RetrievalResult retrieval =
+                new HybridRetriever.RetrievalResult(List.of(), List.of(), false);
+        Queue<RagProgressStage> observed = new ArrayDeque<>();
+        when(rewriter.rewrite(request)).thenAnswer(invocation -> {
+            assertEquals(RagProgressStage.QUESTION_ANALYSIS, observed.peek());
+            return rewritten;
+        });
+        when(retriever.retrieve(rewritten, null)).thenAnswer(invocation -> {
+            assertEquals(List.of(
+                    RagProgressStage.QUESTION_ANALYSIS,
+                    RagProgressStage.KNOWLEDGE_RETRIEVAL), List.copyOf(observed));
+            return retrieval;
+        });
+        when(aggregator.aggregate(rewritten, retrieval)).thenAnswer(invocation -> {
+            assertEquals(List.of(
+                    RagProgressStage.QUESTION_ANALYSIS,
+                    RagProgressStage.KNOWLEDGE_RETRIEVAL,
+                    RagProgressStage.EVIDENCE_ORGANIZATION), List.copyOf(observed));
+            return List.of();
+        });
+        when(expander.expand(List.of())).thenReturn(List.of());
+        when(injector.inject(request, rewritten, List.of()))
+                .thenReturn(new RagPromptInjector.Injection(null, List.of()));
+
+        new RagPipeline(rewriter, retriever, aggregator, expander, injector, properties)
+                .execute(request, observed::add);
+
+        assertEquals(List.of(
+                RagProgressStage.QUESTION_ANALYSIS,
+                RagProgressStage.KNOWLEDGE_RETRIEVAL,
+                RagProgressStage.EVIDENCE_ORGANIZATION), List.copyOf(observed));
+        var ordered = inOrder(rewriter, retriever, aggregator);
+        ordered.verify(rewriter).rewrite(request);
+        ordered.verify(retriever).retrieve(rewritten, null);
+        ordered.verify(aggregator).aggregate(rewritten, retrieval);
     }
 }

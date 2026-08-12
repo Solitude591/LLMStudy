@@ -32,7 +32,7 @@ class ChatFlowTest {
     @Test
     void ragFlowReturnsControlledAnswerForEmptyRetrieval() {
         RagPipeline pipeline = mock(RagPipeline.class);
-        when(pipeline.execute(any())).thenReturn(new RagResult(null,
+        when(pipeline.execute(any(), any())).thenReturn(new RagResult(null,
                 new RewrittenQuery("q", "rewritten"), List.of(), List.of()));
 
         ChatFlow.FlowPreparation result = new RagChatFlow(pipeline)

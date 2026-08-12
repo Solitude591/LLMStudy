@@ -112,7 +112,7 @@
         <div class="panel-stats">
             <div><strong id="onlineDocumentCount">0</strong><span>已上线</span></div>
             <div><strong id="processingDocumentCount">0</strong><span>处理中</span></div>
-            <div><strong id="trackedDocumentCount">0</strong><span>已关联</span></div>
+            <div><strong id="trackedDocumentCount">0</strong><span>文档</span></div>
         </div>
 
         <div id="knowledgeError" class="panel-error" role="alert" hidden></div>
@@ -181,6 +181,9 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
+<!-- 本地 Markdown 解析与 HTML 清洗；defer 脚本按声明顺序执行，必须位于 chat.js 之前。 -->
+<script src="vendor/marked.min.js" defer></script>
+<script src="vendor/purify.min.js" defer></script>
 <script src="js/auth.js" defer></script>
 <script src="js/chat.js" defer></script>
 </body>

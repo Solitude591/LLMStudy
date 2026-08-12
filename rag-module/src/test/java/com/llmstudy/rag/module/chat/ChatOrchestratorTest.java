@@ -1,10 +1,11 @@
 package com.llmstudy.rag.module.chat;
 
-import com.llmstudy.rag.config.ChatProperties;
 import com.llmstudy.rag.auth.model.AccessContext;
 import com.llmstudy.rag.auth.model.UserRole;
+import com.llmstudy.rag.config.ChatProperties;
 import com.llmstudy.rag.entity.ChatConversation;
 import com.llmstudy.rag.entity.ChatMessage;
+import com.llmstudy.rag.enums.ChatProgressStage;
 import com.llmstudy.rag.enums.MessageType;
 import com.llmstudy.rag.module.chat.conversation.ConversationService;
 import com.llmstudy.rag.module.chat.flow.ChatFlow;
@@ -20,8 +21,8 @@ import com.llmstudy.rag.module.chat.model.IntentKeyInformation;
 import com.llmstudy.rag.module.chat.model.IntentRecognitionResult;
 import com.llmstudy.rag.module.chat.stream.ChatStreamExecutor;
 import com.llmstudy.rag.module.chat.title.TitleSummaryService;
-import com.llmstudy.rag.module.rag.model.RagReference;
 import com.llmstudy.rag.module.llm.model.LlmPrompt;
+import com.llmstudy.rag.module.rag.model.RagReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -38,6 +39,11 @@ import reactor.core.publisher.Flux;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -45,6 +51,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -87,7 +94,7 @@ class ChatOrchestratorTest {
                 new IntentRecognitionResult(false,
                         com.llmstudy.rag.module.chat.model.ChatIntent.GENERAL_CHAT,
                         "general", null, false));
-        when(commonFlow.prepare(any(ChatFlowContext.class))).thenReturn(
+        when(commonFlow.prepare(any(ChatFlowContext.class), any())).thenReturn(
                 new ChatFlow.FlowPreparation(LlmPrompt.userOnly("question"),
                         null, List.of(), null));
 
@@ -95,7 +102,7 @@ class ChatOrchestratorTest {
                 new ChatCommand(null, "user", "question"), true);
 
         assertEquals("question", preparation.prompt().userMessage());
-        verify(ragFlow, never()).prepare(any(ChatFlowContext.class));
+        verify(ragFlow, never()).prepare(any(ChatFlowContext.class), any());
     }
 
     @Test
@@ -104,7 +111,7 @@ class ChatOrchestratorTest {
                 null, null, null, null, 0.5, null);
         when(recognizer.recognize("question", List.of()))
                 .thenReturn(IntentRecognitionResult.fallback("unavailable"));
-        when(ragFlow.prepare(any(ChatFlowContext.class))).thenReturn(
+        when(ragFlow.prepare(any(ChatFlowContext.class), any())).thenReturn(
                 new ChatFlow.FlowPreparation(new LlmPrompt("system", "rag prompt"), "rewritten",
                         List.of(reference), null));
 
@@ -124,7 +131,7 @@ class ChatOrchestratorTest {
                         List.of("RAG"), List.of("HotpotQA"), List.of("F1"),
                         List.of("表 3")), false);
         when(recognizer.recognize("question", List.of())).thenReturn(recognized);
-        when(ragFlow.prepare(any(ChatFlowContext.class))).thenReturn(
+        when(ragFlow.prepare(any(ChatFlowContext.class), any())).thenReturn(
                 new ChatFlow.FlowPreparation(new LlmPrompt("system", "rag prompt"),
                         "rewritten", List.of(), null));
 
@@ -132,7 +139,7 @@ class ChatOrchestratorTest {
 
         ArgumentCaptor<ChatFlowContext> captor =
                 ArgumentCaptor.forClass(ChatFlowContext.class);
-        verify(ragFlow).prepare(captor.capture());
+        verify(ragFlow).prepare(captor.capture(), any());
         assertEquals(recognized, captor.getValue().intent());
         assertEquals("question", captor.getValue().query());
         assertEquals(new AccessContext("user", null, UserRole.USER),
@@ -140,12 +147,11 @@ class ChatOrchestratorTest {
     }
 
     @Test
-    void streamAlwaysOrdersStartDeltaDone() {
+    void streamCommonChatEmitsIntentAndAnswerProgress() {
         when(recognizer.recognize("question", List.of())).thenReturn(
                 new IntentRecognitionResult(false,
-                        com.llmstudy.rag.module.chat.model.ChatIntent.GENERAL_CHAT,
-                        "general", null, false));
-        when(commonFlow.prepare(any(ChatFlowContext.class))).thenReturn(
+                        ChatIntent.GENERAL_CHAT, "general", null, false));
+        when(commonFlow.prepare(any(ChatFlowContext.class), any())).thenReturn(
                 new ChatFlow.FlowPreparation(LlmPrompt.userOnly("question"),
                         null, List.of(), null));
         when(executor.execute(any())).thenAnswer(invocation -> {
@@ -154,12 +160,187 @@ class ChatOrchestratorTest {
                     ChatStreamEvent.done(preparation, "assistant-1", 1, "model"));
         });
 
-        List<ChatStreamEvent.Type> types = orchestrator.stream(
+        List<ChatStreamEvent> events = orchestrator.stream(
                         new ChatCommand(null, "user", "question"))
-                .map(ChatStreamEvent::type).collectList().block();
+                .collectList().block();
 
-        assertEquals(List.of(ChatStreamEvent.Type.START,
-                ChatStreamEvent.Type.DELTA, ChatStreamEvent.Type.DONE), types);
+        assertEquals(List.of(
+                ChatStreamEvent.Type.START,
+                ChatStreamEvent.Type.PROGRESS,
+                ChatStreamEvent.Type.PROGRESS,
+                ChatStreamEvent.Type.DELTA,
+                ChatStreamEvent.Type.DONE), events.stream().map(ChatStreamEvent::type).toList());
+        assertEquals(List.of(
+                ChatProgressStage.INTENT_RECOGNITION.name(),
+                ChatProgressStage.ANSWER_GENERATION.name()),
+                events.stream()
+                        .filter(event -> event.type() == ChatStreamEvent.Type.PROGRESS)
+                        .map(ChatStreamEvent::progressName)
+                        .toList());
+        assertEquals(List.of(
+                ChatProgressStage.INTENT_RECOGNITION.message(),
+                ChatProgressStage.ANSWER_GENERATION.message()),
+                events.stream()
+                        .filter(event -> event.type() == ChatStreamEvent.Type.PROGRESS)
+                        .map(ChatStreamEvent::progressMessage)
+                        .toList());
+        verify(ragFlow, never()).prepare(any(ChatFlowContext.class), any());
+    }
+
+    @Test
+    void streamRagEmitsFiveProgressStagesInOrder() {
+        when(recognizer.recognize("question", List.of())).thenReturn(
+                new IntentRecognitionResult(true, ChatIntent.PAPER_CONTENT_QA,
+                        "qa", null, false));
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Consumer<ChatProgressStage> progress = invocation.getArgument(1);
+            progress.accept(ChatProgressStage.QUESTION_ANALYSIS);
+            progress.accept(ChatProgressStage.KNOWLEDGE_RETRIEVAL);
+            progress.accept(ChatProgressStage.EVIDENCE_ORGANIZATION);
+            return new ChatFlow.FlowPreparation(new LlmPrompt("system", "rag"),
+                    "rewritten", List.of(), null);
+        }).when(ragFlow).prepare(any(ChatFlowContext.class), any());
+        when(executor.execute(any())).thenAnswer(invocation -> {
+            ChatPreparation preparation = invocation.getArgument(0);
+            return Flux.just(ChatStreamEvent.delta(preparation, "answer"),
+                    ChatStreamEvent.done(preparation, "assistant-1", 3, "model"));
+        });
+
+        List<ChatStreamEvent> progress = orchestrator.stream(
+                        new ChatCommand(null, "user", "question"))
+                .filter(event -> event.type() == ChatStreamEvent.Type.PROGRESS)
+                .collectList().block();
+
+        assertEquals(List.of(
+                ChatProgressStage.INTENT_RECOGNITION.name(),
+                ChatProgressStage.QUESTION_ANALYSIS.name(),
+                ChatProgressStage.KNOWLEDGE_RETRIEVAL.name(),
+                ChatProgressStage.EVIDENCE_ORGANIZATION.name(),
+                ChatProgressStage.ANSWER_GENERATION.name()),
+                progress.stream().map(ChatStreamEvent::progressName).toList());
+        assertEquals(ChatProgressStage.KNOWLEDGE_RETRIEVAL.message(),
+                progress.get(2).progressMessage());
+    }
+
+    @Test
+    void streamEmptyRetrievalStillReachesAnswerGeneration() {
+        when(recognizer.recognize("question", List.of())).thenReturn(
+                new IntentRecognitionResult(true, ChatIntent.PAPER_CONTENT_QA,
+                        "qa", null, false));
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Consumer<ChatProgressStage> progress = invocation.getArgument(1);
+            progress.accept(ChatProgressStage.QUESTION_ANALYSIS);
+            progress.accept(ChatProgressStage.KNOWLEDGE_RETRIEVAL);
+            progress.accept(ChatProgressStage.EVIDENCE_ORGANIZATION);
+            return new ChatFlow.FlowPreparation(null, "rewritten", List.of(),
+                    RagChatFlow.NO_KNOWLEDGE_ANSWER);
+        }).when(ragFlow).prepare(any(ChatFlowContext.class), any());
+        when(executor.execute(any())).thenAnswer(invocation -> {
+            ChatPreparation preparation = invocation.getArgument(0);
+            return Flux.just(
+                    ChatStreamEvent.delta(preparation, preparation.fixedAnswer()),
+                    ChatStreamEvent.done(preparation, "assistant-1", null, null));
+        });
+
+        List<ChatStreamEvent> events = orchestrator.stream(
+                        new ChatCommand(null, "user", "question"))
+                .collectList().block();
+
+        assertEquals(ChatProgressStage.ANSWER_GENERATION.name(),
+                events.stream()
+                        .filter(event -> event.type() == ChatStreamEvent.Type.PROGRESS)
+                        .reduce((first, second) -> second)
+                        .orElseThrow()
+                        .progressName());
+        assertEquals(RagChatFlow.NO_KNOWLEDGE_ANSWER,
+                events.stream()
+                        .filter(event -> event.type() == ChatStreamEvent.Type.DELTA)
+                        .findFirst()
+                        .orElseThrow()
+                        .content());
+    }
+
+    @Test
+    void streamCancelDuringPrepareDoesNotStartModel() throws Exception {
+        CountDownLatch enteredRecognize = new CountDownLatch(1);
+        CountDownLatch releaseRecognize = new CountDownLatch(1);
+        AtomicBoolean modelStarted = new AtomicBoolean(false);
+        when(recognizer.recognize("question", List.of())).thenAnswer(invocation -> {
+            enteredRecognize.countDown();
+            assertTrue(releaseRecognize.await(3, TimeUnit.SECONDS));
+            return new IntentRecognitionResult(false, ChatIntent.GENERAL_CHAT,
+                    "general", null, false);
+        });
+        when(commonFlow.prepare(any(ChatFlowContext.class), any())).thenReturn(
+                new ChatFlow.FlowPreparation(LlmPrompt.userOnly("question"),
+                        null, List.of(), null));
+        when(executor.execute(any())).thenAnswer(invocation -> {
+            modelStarted.set(true);
+            return Flux.never();
+        });
+
+        AtomicInteger received = new AtomicInteger();
+        var subscription = orchestrator.stream(new ChatCommand(null, "user", "question"))
+                .subscribe(event -> received.incrementAndGet());
+
+        assertTrue(enteredRecognize.await(3, TimeUnit.SECONDS));
+        subscription.dispose();
+        releaseRecognize.countDown();
+        Thread.sleep(200);
+
+        assertTrue(received.get() >= 1);
+        verify(executor, never()).execute(any());
+        assertTrue(!modelStarted.get());
+    }
+
+    @Test
+    void streamCancelDuringModelStopsFurtherDeltas() throws Exception {
+        CountDownLatch firstDelta = new CountDownLatch(1);
+        CountDownLatch allowSecondDelta = new CountDownLatch(1);
+        AtomicInteger deltaCount = new AtomicInteger();
+        when(recognizer.recognize("question", List.of())).thenReturn(
+                new IntentRecognitionResult(false, ChatIntent.GENERAL_CHAT,
+                        "general", null, false));
+        when(commonFlow.prepare(any(ChatFlowContext.class), any())).thenReturn(
+                new ChatFlow.FlowPreparation(LlmPrompt.userOnly("question"),
+                        null, List.of(), null));
+        when(executor.execute(any())).thenAnswer(invocation -> {
+            ChatPreparation preparation = invocation.getArgument(0);
+            return Flux.create(sink -> {
+                sink.next(ChatStreamEvent.delta(preparation, "a"));
+                firstDelta.countDown();
+                try {
+                    if (!allowSecondDelta.await(3, TimeUnit.SECONDS)) {
+                        sink.error(new IllegalStateException("等待取消超时"));
+                        return;
+                    }
+                    if (!sink.isCancelled()) {
+                        sink.next(ChatStreamEvent.delta(preparation, "b"));
+                        sink.next(ChatStreamEvent.done(
+                                preparation, "assistant-1", 1, "model"));
+                        sink.complete();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    sink.error(e);
+                }
+            });
+        });
+
+        var subscription = orchestrator.stream(new ChatCommand(null, "user", "question"))
+                .subscribe(event -> {
+                    if (event.type() == ChatStreamEvent.Type.DELTA) {
+                        deltaCount.incrementAndGet();
+                    }
+                });
+        assertTrue(firstDelta.await(3, TimeUnit.SECONDS));
+        subscription.dispose();
+        allowSecondDelta.countDown();
+        Thread.sleep(200);
+
+        assertEquals(1, deltaCount.get());
     }
 
     @Test
@@ -169,7 +350,7 @@ class ChatOrchestratorTest {
         when(model.call(any(Prompt.class))).thenReturn(ChatResponse.builder()
                 .generations(List.of(new Generation(new AssistantMessage("回答"))))
                 .build());
-        when(commonFlow.prepare(any(ChatFlowContext.class))).thenReturn(
+        when(commonFlow.prepare(any(ChatFlowContext.class), any())).thenReturn(
                 new ChatFlow.FlowPreparation(
                         new LlmPrompt("系统规则", "当前用户数据"),
                         null, List.of(), null));

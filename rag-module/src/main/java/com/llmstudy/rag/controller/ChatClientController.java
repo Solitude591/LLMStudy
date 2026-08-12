@@ -54,6 +54,9 @@ public class ChatClientController {
 
     /**
      * SSE 聊天入口。订阅和生成可能切换线程，因此必须先在调用 orchestrator 前捕获身份。
+     *
+     * <p>事件顺序一般为 START → PROGRESS… → DELTA… → DONE；
+     * PROGRESS 仅反映准备阶段真实进度，不写入回答正文。</p>
      */
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ChatStreamResponse> stream(@RequestBody ChatRequest request) {
@@ -107,10 +110,15 @@ public class ChatClientController {
         return new ChatCommand(request.conversationId(), accessContext, request.query());
     }
 
+    /**
+     * 将内部流事件映射为对外 SSE DTO。
+     * PROGRESS 时带上 progressName / progressMessage；其余事件这两项为 null。
+     */
     private static ChatStreamResponse toResponse(ChatStreamEvent event) {
         return new ChatStreamResponse(event.type().name(), event.conversationId(),
                 event.conversationTitle(), event.userMessageId(),
                 event.assistantMessageId(), event.content(),
-                event.tokenCount(), event.modelName());
+                event.tokenCount(), event.modelName(),
+                event.progressName(), event.progressMessage());
     }
 }

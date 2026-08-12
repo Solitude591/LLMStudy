@@ -108,6 +108,28 @@ class SemanticTextSplitterTest {
 class ContentListPaperChunkerTest {
 
     @Test
+    void infersNumberedHeadingLevelsFromFlatMineruLevels() {
+        SnowflakeIdGenerator ids = new SnowflakeIdGenerator(1);
+        ContentListPaperChunker chunker = new ContentListPaperChunker(
+                ids, new MarkdownImageProcessor(), 1000, 100);
+
+        List<KnowledgeChunk> chunks = chunker.split(List.of(
+                text("论文标题", 1, 0),
+                text("2. Methodology", 2, 1),
+                text("2.1. Problem Setting", 2, 2),
+                text("问题定义正文。", null, 2),
+                text("3. Experiments", 2, 3),
+                text("3.1 Datasets", 2, 3),
+                text("数据集正文。", null, 3)));
+
+        assertEquals(2, chunks.size());
+        assertEquals("论文标题 > 2. Methodology > 2.1. Problem Setting",
+                chunks.get(0).metadata().get(SegmentMetadataKeys.HEADER_PATH));
+        assertEquals("论文标题 > 3. Experiments > 3.1 Datasets",
+                chunks.get(1).metadata().get(SegmentMetadataKeys.HEADER_PATH));
+    }
+
+    @Test
     void imagesAndTablesBecomeStandaloneWithPages() {
         SnowflakeIdGenerator ids = new SnowflakeIdGenerator(1);
         ContentListPaperChunker chunker = new ContentListPaperChunker(
@@ -234,6 +256,35 @@ class ContentListPaperChunkerTest {
 class MarkdownAstPaperChunkerTest {
 
     @Test
+    void infersNumberedHeadingLevelsFromFlatMarkdown() {
+        SnowflakeIdGenerator ids = new SnowflakeIdGenerator(1);
+        MarkdownAstPaperChunker chunker = new MarkdownAstPaperChunker(ids, 1000, 100);
+        String markdown = """
+                # 论文标题
+
+                ## 2 Methodology
+
+                ## 2.1 Problem Setting
+
+                问题定义正文。
+
+                ## 3. Experiments
+
+                ## 3.1. Datasets
+
+                数据集正文。
+                """;
+
+        List<KnowledgeChunk> chunks = chunker.split(markdown);
+
+        assertEquals(2, chunks.size());
+        assertEquals("论文标题 > 2 Methodology > 2.1 Problem Setting",
+                chunks.get(0).metadata().get(SegmentMetadataKeys.HEADER_PATH));
+        assertEquals("论文标题 > 3. Experiments > 3.1. Datasets",
+                chunks.get(1).metadata().get(SegmentMetadataKeys.HEADER_PATH));
+    }
+
+    @Test
     void imageParagraphBecomesStandaloneAndFallbackHasNoPages() {
         SnowflakeIdGenerator ids = new SnowflakeIdGenerator(1);
         MarkdownAstPaperChunker chunker = new MarkdownAstPaperChunker(ids, 1000, 100);
@@ -284,5 +335,20 @@ class MarkdownAstPaperChunkerTest {
         assertTrue(tableChunk.text().contains("| Metric | Value |"));
         assertTrue(tableChunk.text().contains("| HD95 | 12.3 |"));
         assertFalse(tableChunk.metadata().containsKey(SegmentMetadataKeys.PARENT_CHUNK_ID));
+    }
+}
+
+class HeaderPathStackTest {
+
+    @Test
+    void leavesNonNumberedAndAlreadyCorrectLevelsUnchanged() {
+        HeaderPathStack headers = new HeaderPathStack();
+        headers.push(1, "论文标题");
+        headers.push(2, "2. Methodology");
+        headers.push(3, "2.1. Problem Setting");
+        assertEquals("论文标题 > 2. Methodology > 2.1. Problem Setting", headers.path());
+
+        headers.push(2, "3D Segmentation");
+        assertEquals("论文标题 > 3D Segmentation", headers.path());
     }
 }

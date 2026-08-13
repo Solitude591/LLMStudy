@@ -6,7 +6,7 @@ import com.llmstudy.rag.module.rag.model.RagFocusInformation;
 import com.llmstudy.rag.module.rag.model.RagIntentContext;
 import com.llmstudy.rag.module.rag.model.RagRequest;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
-import com.llmstudy.rag.module.rag.model.RewrittenQuery;
+import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.DefaultResourceLoader;
 
@@ -39,7 +39,7 @@ class RagPromptInjectorTest {
                 0.8, 0.9);
 
         RagPromptInjector.Injection result = injector.inject(request,
-                new RewrittenQuery(request.question(), "RAG 表 3 F1 结果"),
+                new RetrievalQueryPlan(request.question(), "RAG 表 3 F1 结果", "Table 3 F1"),
                 List.of(candidate));
 
         assertTrue(result.prompt().systemMessage().contains("实验设置、数据集、指标"));
@@ -70,7 +70,7 @@ class RagPromptInjectorTest {
 
         RagPromptInjector.Injection result = injector.inject(
                 new RagRequest("question", "无"),
-                new RewrittenQuery("question", "rewritten"),
+                new RetrievalQueryPlan("question", "rewritten", "rewritten"),
                 List.of(candidate));
 
         assertTrue(result.prompt().userMessage().contains("页码: 第 3–4 页"));
@@ -83,7 +83,7 @@ class RagPromptInjectorTest {
         RagPromptTemplateRegistry registry = mock(RagPromptTemplateRegistry.class);
         RagPromptInjector.Injection result = new RagPromptInjector(registry).inject(
                 new RagRequest("question", "无"),
-                new RewrittenQuery("question", "rewritten"), List.of());
+                new RetrievalQueryPlan("question", "rewritten", "rewritten"), List.of());
 
         assertNull(result.prompt());
         assertTrue(result.references().isEmpty());
@@ -106,7 +106,7 @@ class RagPromptInjectorTest {
                         RagFocusInformation.empty()));
 
         RagPromptInjector.Injection result = new RagPromptInjector(registry).inject(
-                request, new RewrittenQuery("question", "rewritten"),
+                request, new RetrievalQueryPlan("question", "rewritten", "rewritten"),
                 List.of(new RetrievalCandidate("chunk", "evidence", Map.of(), 1, null)));
 
         assertEquals("generic system", result.prompt().systemMessage());

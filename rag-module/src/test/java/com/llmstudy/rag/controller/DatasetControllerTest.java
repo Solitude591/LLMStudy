@@ -1,8 +1,5 @@
 package com.llmstudy.rag.controller;
 
-import com.llmstudy.rag.auth.model.AccessContext;
-import com.llmstudy.rag.auth.model.UserRole;
-import com.llmstudy.rag.auth.service.CurrentUserProvider;
 import com.llmstudy.rag.config.GlobalExceptionHandler;
 import com.llmstudy.rag.dto.ApiResult;
 import com.llmstudy.rag.dto.DatasetGenerateRequest;
@@ -10,7 +7,6 @@ import com.llmstudy.rag.dto.DatasetGenerateResponse;
 import com.llmstudy.rag.module.dataset.DatasetGenerationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -22,7 +18,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -33,11 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class DatasetControllerTest {
 
-    private static final AccessContext ACCESS =
-            new AccessContext("user-1", "org-a", UserRole.USER);
-
     private DatasetGenerationService service;
-    private CurrentUserProvider currentUserProvider;
     private DatasetController controller;
     private MockMvc mvc;
     private JsonMapper jsonMapper;
@@ -45,9 +36,7 @@ class DatasetControllerTest {
     @BeforeEach
     void setUp() {
         service = mock(DatasetGenerationService.class);
-        currentUserProvider = mock(CurrentUserProvider.class);
-        when(currentUserProvider.requireAccessContext()).thenReturn(ACCESS);
-        controller = new DatasetController(service, currentUserProvider);
+        controller = new DatasetController(service);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
@@ -55,10 +44,10 @@ class DatasetControllerTest {
     }
 
     @Test
-    void generateCapturesAccessContextAndDelegatesToService() {
+    void generateDelegatesToServiceWithoutAuth() {
         DatasetGenerateResponse payload = new DatasetGenerateResponse(
                 "问题", "回答", List.of("chunk-a"));
-        when(service.generate(eq("问题"), eq(ACCESS))).thenReturn(payload);
+        when(service.generate(eq("问题"))).thenReturn(payload);
 
         ApiResult<DatasetGenerateResponse> result =
                 controller.generate(new DatasetGenerateRequest("问题"));
@@ -66,10 +55,7 @@ class DatasetControllerTest {
         assertEquals(0, result.getCode());
         assertEquals("ok", result.getMessage());
         assertEquals(payload, result.getData());
-        ArgumentCaptor<AccessContext> captor = ArgumentCaptor.forClass(AccessContext.class);
-        verify(currentUserProvider).requireAccessContext();
-        verify(service).generate(eq("问题"), captor.capture());
-        assertEquals(ACCESS, captor.getValue());
+        verify(service).generate("问题");
     }
 
     @Test
@@ -88,7 +74,7 @@ class DatasetControllerTest {
 
     @Test
     void successJsonContainsOnlyQueryResponseAndChunks() throws Exception {
-        when(service.generate(eq("表 3 中哪个模型的 F1 最高？"), any()))
+        when(service.generate(eq("表 3 中哪个模型的 F1 最高？")))
                 .thenReturn(new DatasetGenerateResponse(
                         "表 3 中哪个模型的 F1 最高？",
                         "Hybrid RAG 的 F1 最高[1]。",

@@ -1,14 +1,15 @@
 package com.llmstudy.rag.module.rag.query;
 
 import com.llmstudy.rag.module.rag.model.RagRequest;
-import com.llmstudy.rag.module.rag.model.RewrittenQuery;
+import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
 
-/** 将当前问题与会话上下文改写为更适合语义检索的独立查询。 */
+/** 将当前问题与会话上下文改写为中英文独立检索查询。 */
 public interface QueryRewriter {
 
     /**
      * @param request RAG 原始请求
-     * @return 同时保留原问题与改写问题的结果
+     * @return 原问题 + 中文独立查询 + 英文独立查询
+     * @throws QueryRewriteException 模型调用、空响应、JSON 非法或校验失败
      */
-    RewrittenQuery rewrite(RagRequest request);
+    RetrievalQueryPlan rewrite(RagRequest request);
 }

@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -97,6 +98,18 @@ class LlmFileLoggingAdvisorTest {
                 .map(ILoggingEvent::getFormattedMessage)
                 .filter(message -> message.contains("LLM RESPONSE"))
                 .count());
+    }
+
+    @Test
+    void diagnoseTraceContextAddsAndClearsTraceId() {
+        assertNull(LlmTraceContext.params("before").get(LlmFileLoggingAdvisor.TRACE_ID_KEY));
+        try (LlmTraceContext ignored = LlmTraceContext.openDiagnose("trace-diagnose-1")) {
+            assertEquals("trace-diagnose-1", LlmTraceContext.params("rewrite")
+                    .get(LlmFileLoggingAdvisor.TRACE_ID_KEY));
+            assertEquals("trace-diagnose-1", org.slf4j.MDC.get(LlmTraceContext.MDC_TRACE_ID));
+        }
+        assertNull(LlmTraceContext.params("after").get(LlmFileLoggingAdvisor.TRACE_ID_KEY));
+        assertNull(org.slf4j.MDC.get(LlmTraceContext.MDC_TRACE_ID));
     }
 
     @Test

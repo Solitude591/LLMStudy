@@ -21,12 +21,13 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class AuthConfig implements WebMvcConfigurer {
 
     /**
-     * 无需登录即可访问的页面和静态资源。
+     * 无需登录即可访问的路径。
      *
-     * <p>业务 API 不应加入该列表；除登录接口外，所有接口均要求有效登录态。</p>
+     * <p>除登录、静态页、RAGAS 数据集生成和 dev 检索诊断外，其余业务 API 均要求有效登录态。</p>
      */
     private static final String[] PUBLIC_PATHS = {
-            "/auth/login", "/", "/index.html", "/login.html", "/chat.html",
+            "/auth/login", "/dataset/generate", "/dev/rag/retrieval/diagnose",
+            "/", "/index.html", "/login.html", "/chat.html",
             "/upload.html", "/css/**", "/js/**", "/vendor/**", "/favicon.ico", "/error"
     };
 

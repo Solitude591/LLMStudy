@@ -1,109 +1,106 @@
 package com.llmstudy.rag.module.rag;
 
-import com.llmstudy.rag.config.RerankerProperties;
+import com.llmstudy.rag.config.RetrievalProperties;
 import com.llmstudy.rag.enums.RagProgressStage;
+import com.llmstudy.rag.module.llm.LlmFileLoggingAdvisor;
+import com.llmstudy.rag.module.llm.LlmTraceContext;
 import com.llmstudy.rag.module.llm.model.LlmPrompt;
-import com.llmstudy.rag.module.rag.aggregation.RetrievalAggregator;
+import com.llmstudy.rag.module.rag.aggregation.RrfRerankAggregator;
 import com.llmstudy.rag.module.rag.model.RagReference;
 import com.llmstudy.rag.module.rag.model.RagRequest;
 import com.llmstudy.rag.module.rag.model.RagResult;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
-import com.llmstudy.rag.module.rag.model.RewrittenQuery;
+import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
 import com.llmstudy.rag.module.rag.prompt.RagPromptInjector;
 import com.llmstudy.rag.module.rag.query.QueryRewriter;
 import com.llmstudy.rag.module.rag.retrieval.HybridRetriever;
 import com.llmstudy.rag.module.rag.retrieval.ParentChunkExpander;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class RagPipelineTest {
 
     @Test
-    void executesRewriteRetrieveAggregateExpandThenTopNInject() {
+    void executesRewriteRetrieveAggregateExpandThenInject() {
         QueryRewriter rewriter = mock(QueryRewriter.class);
         HybridRetriever retriever = mock(HybridRetriever.class);
-        RetrievalAggregator aggregator = mock(RetrievalAggregator.class);
+        RrfRerankAggregator aggregator = mock(RrfRerankAggregator.class);
+        ParentChunkExpander expander = mock(ParentChunkExpander.class);
         RagPromptInjector injector = mock(RagPromptInjector.class);
         RagRequest request = new RagRequest("original", "history");
-        RewrittenQuery rewritten = new RewrittenQuery("original", "rewritten");
-        HybridRetriever.RetrievalResult retrieval =
-                new HybridRetriever.RetrievalResult(List.of(), List.of(), false);
-        RetrievalCandidate candidate = new RetrievalCandidate(
-                "1", "evidence", Map.of(), 0.5, null);
-        RetrievalCandidate second = new RetrievalCandidate(
-                "2", "more evidence", Map.of("docId", "doc"), 0.4, 0.9);
+        RetrievalQueryPlan plan = new RetrievalQueryPlan("original", "zh", "en");
+        HybridRetriever.RetrievalResult retrieval = HybridRetriever.RetrievalResult.empty();
+        RetrievalCandidate child = new RetrievalCandidate(
+                "c1", "evidence", Map.of(), 0.5, null);
+        RetrievalCandidate parent = new RetrievalCandidate(
+                "p1", "parent text", Map.of(), 0.5, null);
         RagReference reference = new RagReference(
-                1, "doc", "1", null, null, null, null, 0.5, null);
-        List<RetrievalCandidate> candidates = List.of(candidate, second);
-        ParentChunkExpander expander = mock(ParentChunkExpander.class);
-        RerankerProperties properties = new RerankerProperties();
-        properties.setTopN(8);
-        when(rewriter.rewrite(request)).thenReturn(rewritten);
-        when(retriever.retrieve(rewritten, null)).thenReturn(retrieval);
-        when(aggregator.aggregate(rewritten, retrieval)).thenReturn(candidates);
-        when(expander.expand(candidates)).thenReturn(candidates);
-        when(injector.inject(request, rewritten, candidates))
+                1, "doc", "p1", null, null, null, null, 0.5, null);
+        when(rewriter.rewrite(request)).thenReturn(plan);
+        when(retriever.retrieve(plan, null)).thenReturn(retrieval);
+        when(aggregator.aggregate(plan, retrieval)).thenReturn(ranked(List.of(child)));
+        when(expander.expandOne(eq(child), anyMap())).thenReturn(parent);
+        when(injector.inject(request, plan, List.of(parent)))
                 .thenReturn(new RagPromptInjector.Injection(
                         new LlmPrompt("system", "user"), List.of(reference)));
 
-        RagResult result = new RagPipeline(
-                rewriter, retriever, aggregator, expander, injector, properties)
+        RagResult result = pipeline(rewriter, retriever, aggregator, expander, injector, 8)
                 .execute(request);
 
         assertEquals("system", result.prompt().systemMessage());
-        assertEquals("user", result.prompt().userMessage());
-        assertEquals("rewritten", result.rewrittenQuery().rewrittenQuestion());
-        assertEquals(List.of("evidence", "more evidence"), result.chunks());
+        assertEquals("zh", result.queryPlan().standaloneZh());
+        assertEquals(List.of("parent text"), result.chunks());
         var ordered = inOrder(rewriter, retriever, aggregator, expander, injector);
         ordered.verify(rewriter).rewrite(request);
-        ordered.verify(retriever).retrieve(rewritten, null);
-        ordered.verify(aggregator).aggregate(rewritten, retrieval);
-        ordered.verify(expander).expand(candidates);
-        ordered.verify(injector).inject(request, rewritten, candidates);
+        ordered.verify(retriever).retrieve(plan, null);
+        ordered.verify(aggregator).aggregate(plan, retrieval);
+        ordered.verify(expander).expandOne(eq(child), anyMap());
+        ordered.verify(injector).inject(request, plan, List.of(parent));
     }
 
     @Test
-    void appliesTopNAfterParentExpand() {
+    void backfillsAfterDuplicateParentUntilTopN() {
         QueryRewriter rewriter = mock(QueryRewriter.class);
         HybridRetriever retriever = mock(HybridRetriever.class);
-        RetrievalAggregator aggregator = mock(RetrievalAggregator.class);
+        RrfRerankAggregator aggregator = mock(RrfRerankAggregator.class);
         ParentChunkExpander expander = mock(ParentChunkExpander.class);
         RagPromptInjector injector = mock(RagPromptInjector.class);
         RagRequest request = new RagRequest("original", "history");
-        RewrittenQuery rewritten = new RewrittenQuery("original", "rewritten");
-        HybridRetriever.RetrievalResult retrieval =
-                new HybridRetriever.RetrievalResult(List.of(), List.of(), false);
-        List<RetrievalCandidate> fused = new ArrayList<>();
-        for (int i = 0; i < 5; i++) {
-            fused.add(new RetrievalCandidate(
-                    "c" + i, "child-" + i, Map.of(), 1.0 - i * 0.1, null));
-        }
-        List<RetrievalCandidate> expanded = List.of(
-                new RetrievalCandidate("p1", "parent-a", Map.of(), 1.0, null),
-                new RetrievalCandidate("p2", "parent-b", Map.of(), 0.9, null),
-                new RetrievalCandidate("p3", "parent-c", Map.of(), 0.8, null));
-        RerankerProperties properties = new RerankerProperties();
-        properties.setTopN(2);
-        when(rewriter.rewrite(request)).thenReturn(rewritten);
-        when(retriever.retrieve(rewritten, null)).thenReturn(retrieval);
-        when(aggregator.aggregate(rewritten, retrieval)).thenReturn(fused);
-        when(expander.expand(fused)).thenReturn(expanded);
-        when(injector.inject(request, rewritten, List.of(expanded.get(0), expanded.get(1))))
+        RetrievalQueryPlan plan = new RetrievalQueryPlan("original", "zh", "en");
+        HybridRetriever.RetrievalResult retrieval = HybridRetriever.RetrievalResult.empty();
+        RetrievalCandidate first = new RetrievalCandidate("c1", "a", Map.of(), 1.0, null);
+        RetrievalCandidate second = new RetrievalCandidate("c2", "b", Map.of(), 0.9, null);
+        RetrievalCandidate third = new RetrievalCandidate("c3", "c", Map.of(), 0.8, null);
+        RetrievalCandidate parentA = new RetrievalCandidate("p1", "parent-a", Map.of(), 1.0, null);
+        RetrievalCandidate parentB = new RetrievalCandidate("p2", "parent-b", Map.of(), 0.8, null);
+        when(rewriter.rewrite(request)).thenReturn(plan);
+        when(retriever.retrieve(plan, null)).thenReturn(retrieval);
+        when(aggregator.aggregate(plan, retrieval))
+                .thenReturn(ranked(List.of(first, second, third)));
+        when(expander.expandOne(eq(first), anyMap())).thenReturn(parentA);
+        when(expander.expandOne(eq(second), anyMap())).thenReturn(parentA);
+        when(expander.expandOne(eq(third), anyMap())).thenReturn(parentB);
+        when(injector.inject(eq(request), eq(plan), any()))
                 .thenReturn(new RagPromptInjector.Injection(null, List.of()));
 
-        RagResult result = new RagPipeline(
-                rewriter, retriever, aggregator, expander, injector, properties)
+        RagResult result = pipeline(rewriter, retriever, aggregator, expander, injector, 2)
                 .execute(request);
 
         assertEquals(List.of("parent-a", "parent-b"), result.chunks());
@@ -113,23 +110,19 @@ class RagPipelineTest {
     void emptyCandidatesYieldEmptyChunks() {
         QueryRewriter rewriter = mock(QueryRewriter.class);
         HybridRetriever retriever = mock(HybridRetriever.class);
-        RetrievalAggregator aggregator = mock(RetrievalAggregator.class);
+        RrfRerankAggregator aggregator = mock(RrfRerankAggregator.class);
         ParentChunkExpander expander = mock(ParentChunkExpander.class);
         RagPromptInjector injector = mock(RagPromptInjector.class);
-        RerankerProperties properties = new RerankerProperties();
         RagRequest request = new RagRequest("original", "history");
-        RewrittenQuery rewritten = new RewrittenQuery("original", "rewritten");
-        HybridRetriever.RetrievalResult retrieval =
-                new HybridRetriever.RetrievalResult(List.of(), List.of(), false);
-        when(rewriter.rewrite(request)).thenReturn(rewritten);
-        when(retriever.retrieve(rewritten, null)).thenReturn(retrieval);
-        when(aggregator.aggregate(rewritten, retrieval)).thenReturn(List.of());
-        when(expander.expand(List.of())).thenReturn(List.of());
-        when(injector.inject(request, rewritten, List.of()))
+        RetrievalQueryPlan plan = new RetrievalQueryPlan("original", "zh", "en");
+        HybridRetriever.RetrievalResult retrieval = HybridRetriever.RetrievalResult.empty();
+        when(rewriter.rewrite(request)).thenReturn(plan);
+        when(retriever.retrieve(plan, null)).thenReturn(retrieval);
+        when(aggregator.aggregate(plan, retrieval)).thenReturn(ranked(List.of()));
+        when(injector.inject(request, plan, List.of()))
                 .thenReturn(new RagPromptInjector.Injection(null, List.of()));
 
-        RagResult result = new RagPipeline(
-                rewriter, retriever, aggregator, expander, injector, properties)
+        RagResult result = pipeline(rewriter, retriever, aggregator, expander, injector, 8)
                 .execute(request);
 
         assertTrue(result.empty());
@@ -137,49 +130,118 @@ class RagPipelineTest {
     }
 
     @Test
+    void diagnoseClipsEvidenceTextUnlessIncludeText() {
+        QueryRewriter rewriter = mock(QueryRewriter.class);
+        HybridRetriever retriever = mock(HybridRetriever.class);
+        RrfRerankAggregator aggregator = mock(RrfRerankAggregator.class);
+        ParentChunkExpander expander = mock(ParentChunkExpander.class);
+        RagPromptInjector injector = mock(RagPromptInjector.class);
+        RagRequest request = new RagRequest("original", "history");
+        RetrievalQueryPlan plan = new RetrievalQueryPlan("original", "zh", "en");
+        HybridRetriever.RetrievalResult retrieval = HybridRetriever.RetrievalResult.empty();
+        String longText = "字".repeat(400);
+        RetrievalCandidate child = new RetrievalCandidate("c1", longText, Map.of(), 1.0, null);
+        when(rewriter.rewrite(request)).thenReturn(plan);
+        when(retriever.retrieve(plan, null)).thenReturn(retrieval);
+        when(aggregator.aggregate(plan, retrieval)).thenReturn(ranked(List.of(child)));
+        when(expander.expandOne(eq(child), anyMap())).thenReturn(child);
+
+        RagPipeline pipeline = pipeline(
+                rewriter, retriever, aggregator, expander, injector, 8);
+
+        var preview = pipeline.diagnose(request, false);
+        assertEquals(300, preview.finalCandidates().getFirst().text().length());
+        assertFalse(preview.bgeUsed());
+        assertEquals("too-few-candidates", preview.bgeReason());
+        assertTrue(preview.failures().contains("bge: too-few-candidates"));
+        assertEquals(400, pipeline.diagnose(request, true).finalCandidates()
+                .getFirst().text().length());
+        verifyNoInteractions(injector);
+    }
+
+    @Test
+    void diagnoseBindsTraceIdBeforeRewrite() {
+        QueryRewriter rewriter = mock(QueryRewriter.class);
+        HybridRetriever retriever = mock(HybridRetriever.class);
+        RrfRerankAggregator aggregator = mock(RrfRerankAggregator.class);
+        ParentChunkExpander expander = mock(ParentChunkExpander.class);
+        RagPromptInjector injector = mock(RagPromptInjector.class);
+        RagRequest request = new RagRequest("original", "history");
+        RetrievalQueryPlan plan = new RetrievalQueryPlan("original", "zh", "en");
+        HybridRetriever.RetrievalResult retrieval = HybridRetriever.RetrievalResult.empty();
+        AtomicReference<String> seenTraceId = new AtomicReference<>();
+        when(rewriter.rewrite(request)).thenAnswer(invocation -> {
+            seenTraceId.set(String.valueOf(
+                    LlmTraceContext.params("query-rewrite")
+                            .get(LlmFileLoggingAdvisor.TRACE_ID_KEY)));
+            return plan;
+        });
+        when(retriever.retrieve(plan, null)).thenReturn(retrieval);
+        when(aggregator.aggregate(plan, retrieval)).thenReturn(ranked(List.of()));
+
+        var response = pipeline(rewriter, retriever, aggregator, expander, injector, 8)
+                .diagnose(request, false);
+
+        assertEquals(response.traceId(), seenTraceId.get());
+        assertNull(LlmTraceContext.params("after").get(LlmFileLoggingAdvisor.TRACE_ID_KEY));
+    }
+
+    @Test
     void progressCallbacksMatchRewriteRetrieveAggregateOrder() {
         QueryRewriter rewriter = mock(QueryRewriter.class);
         HybridRetriever retriever = mock(HybridRetriever.class);
-        RetrievalAggregator aggregator = mock(RetrievalAggregator.class);
+        RrfRerankAggregator aggregator = mock(RrfRerankAggregator.class);
         ParentChunkExpander expander = mock(ParentChunkExpander.class);
         RagPromptInjector injector = mock(RagPromptInjector.class);
-        RerankerProperties properties = new RerankerProperties();
         RagRequest request = new RagRequest("original", "history");
-        RewrittenQuery rewritten = new RewrittenQuery("original", "rewritten");
-        HybridRetriever.RetrievalResult retrieval =
-                new HybridRetriever.RetrievalResult(List.of(), List.of(), false);
+        RetrievalQueryPlan plan = new RetrievalQueryPlan("original", "zh", "en");
+        HybridRetriever.RetrievalResult retrieval = HybridRetriever.RetrievalResult.empty();
         Queue<RagProgressStage> observed = new ArrayDeque<>();
         when(rewriter.rewrite(request)).thenAnswer(invocation -> {
             assertEquals(RagProgressStage.QUESTION_ANALYSIS, observed.peek());
-            return rewritten;
+            return plan;
         });
-        when(retriever.retrieve(rewritten, null)).thenAnswer(invocation -> {
+        when(retriever.retrieve(plan, null)).thenAnswer(invocation -> {
             assertEquals(List.of(
                     RagProgressStage.QUESTION_ANALYSIS,
                     RagProgressStage.KNOWLEDGE_RETRIEVAL), List.copyOf(observed));
             return retrieval;
         });
-        when(aggregator.aggregate(rewritten, retrieval)).thenAnswer(invocation -> {
+        when(aggregator.aggregate(plan, retrieval)).thenAnswer(invocation -> {
             assertEquals(List.of(
                     RagProgressStage.QUESTION_ANALYSIS,
                     RagProgressStage.KNOWLEDGE_RETRIEVAL,
                     RagProgressStage.EVIDENCE_ORGANIZATION), List.copyOf(observed));
-            return List.of();
+            return ranked(List.of());
         });
-        when(expander.expand(List.of())).thenReturn(List.of());
-        when(injector.inject(request, rewritten, List.of()))
+        when(injector.inject(request, plan, List.of()))
                 .thenReturn(new RagPromptInjector.Injection(null, List.of()));
 
-        new RagPipeline(rewriter, retriever, aggregator, expander, injector, properties)
+        pipeline(rewriter, retriever, aggregator, expander, injector, 8)
                 .execute(request, observed::add);
 
         assertEquals(List.of(
                 RagProgressStage.QUESTION_ANALYSIS,
                 RagProgressStage.KNOWLEDGE_RETRIEVAL,
                 RagProgressStage.EVIDENCE_ORGANIZATION), List.copyOf(observed));
-        var ordered = inOrder(rewriter, retriever, aggregator);
-        ordered.verify(rewriter).rewrite(request);
-        ordered.verify(retriever).retrieve(rewritten, null);
-        ordered.verify(aggregator).aggregate(rewritten, retrieval);
+    }
+
+    private static RagPipeline pipeline(QueryRewriter rewriter,
+                                        HybridRetriever retriever,
+                                        RrfRerankAggregator aggregator,
+                                        ParentChunkExpander expander,
+                                        RagPromptInjector injector,
+                                        int topN) {
+        RetrievalProperties properties = new RetrievalProperties();
+        properties.setTopN(topN);
+        return new RagPipeline(
+                rewriter, retriever, aggregator, expander, injector, properties);
+    }
+
+    private static RrfRerankAggregator.RankedEvidence ranked(
+            List<RetrievalCandidate> candidates) {
+        return new RrfRerankAggregator.RankedEvidence(
+                candidates, candidates, candidates, candidates,
+                false, "too-few-candidates", 0, "query");
     }
 }

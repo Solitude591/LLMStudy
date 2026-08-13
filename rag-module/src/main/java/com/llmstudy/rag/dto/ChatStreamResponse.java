@@ -6,7 +6,7 @@ package com.llmstudy.rag.dto;
  * <p>在原有 START / DELTA / DONE 之上扩展可空的进度字段。旧前端若忽略
  * 未知 {@code event=PROGRESS}，不影响 DELTA/DONE 的原有语义。</p>
  *
- * @param event              事件类型：START、PROGRESS、DELTA 或 DONE
+ * @param event              事件类型：START、PROGRESS、DELTA、DONE 或 ERROR
  * @param conversationId     会话 ID，每个事件都会携带
  * @param conversationTitle  会话临时标题，仅 START 事件有值
  * @param userMessageId      本次用户消息 ID

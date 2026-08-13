@@ -18,11 +18,24 @@ class RrfFusionTest {
         RetrievalCandidate c = candidate("c");
 
         List<RetrievalCandidate> result = new RrfFusion().fuse(
-                List.of(a, b), List.of(b, c), 10);
+                List.of(List.of(a, b), List.of(b, c)), 10, 60);
 
         assertEquals(List.of("b", "a", "c"),
                 result.stream().map(RetrievalCandidate::id).toList());
-        assertTrue(result.getFirst().score() > result.get(1).score());
+        assertTrue(result.getFirst().rrfScore() > result.get(1).rrfScore());
+        assertEquals(1.0, result.getFirst().rawScore());
+    }
+
+    @Test
+    void fourWayHitsAccumulateAndTieBreaksByHitCountThenBestRankThenId() {
+        // d 只在一路 rank1；e 两路都是 rank2。1/(60+1) < 2/(60+2)，e 应更高。
+        List<RetrievalCandidate> result = new RrfFusion().fuse(List.of(
+                List.of(candidate("d"), candidate("e")),
+                List.of(candidate("f"), candidate("e")),
+                List.of(),
+                List.of()), 10, 60);
+
+        assertEquals("e", result.getFirst().id());
     }
 
     private static RetrievalCandidate candidate(String id) {

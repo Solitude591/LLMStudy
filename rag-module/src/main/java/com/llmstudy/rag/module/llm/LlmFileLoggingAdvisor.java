@@ -32,6 +32,7 @@ public class LlmFileLoggingAdvisor implements CallAdvisor, StreamAdvisor {
     public static final String STAGE_KEY = "llm.log.stage";
     public static final String CONVERSATION_ID_KEY = "llm.log.conversation-id";
     public static final String MESSAGE_ID_KEY = "llm.log.message-id";
+    public static final String TRACE_ID_KEY = "llm.log.trace-id";
 
     private static final Logger log = LoggerFactory.getLogger("LLM_CALL_FILE");
 
@@ -99,6 +100,7 @@ public class LlmFileLoggingAdvisor implements CallAdvisor, StreamAdvisor {
                 stage: {}
                 conversationId: {}
                 messageId: {}
+                traceId: {}
                 stream: {}
                 options: {}
                 messages:
@@ -109,6 +111,7 @@ public class LlmFileLoggingAdvisor implements CallAdvisor, StreamAdvisor {
                 contextValue(context, STAGE_KEY),
                 contextValue(context, CONVERSATION_ID_KEY),
                 contextValue(context, MESSAGE_ID_KEY),
+                contextValue(context, TRACE_ID_KEY),
                 stream,
                 request.prompt().getOptions(),
                 formatMessages(request.prompt().getInstructions()));

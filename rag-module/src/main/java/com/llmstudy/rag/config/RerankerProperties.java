@@ -29,12 +29,6 @@ public class RerankerProperties {
     /** 推理批次大小，批内按最长序列动态 padding。 */
     private int batchSize = 4;
 
-    /** RRF 融合后进入 ReRanker 的候选条数上限。 */
-    private int candidateCount = 10;
-
-    /** ReRanker 之后最终返回给上层的条数。 */
-    private int topN = 8;
-
     public boolean isEnabled() {
         return enabled;
     }
@@ -73,21 +67,5 @@ public class RerankerProperties {
 
     public void setBatchSize(int batchSize) {
         this.batchSize = batchSize;
-    }
-
-    public int getCandidateCount() {
-        return candidateCount;
-    }
-
-    public void setCandidateCount(int candidateCount) {
-        this.candidateCount = candidateCount;
-    }
-
-    public int getTopN() {
-        return topN;
-    }
-
-    public void setTopN(int topN) {
-        this.topN = topN;
     }
 }

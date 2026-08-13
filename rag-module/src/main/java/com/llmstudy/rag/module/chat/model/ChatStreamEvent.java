@@ -17,8 +17,8 @@ public record ChatStreamEvent(Type type, String conversationId,
                               // 仅 PROGRESS 有值：后端统一维护的中文文案
                               String progressMessage) {
 
-    /** 流事件类型；PROGRESS 为准备阶段进度，不写入助手消息 content。 */
-    public enum Type { START, PROGRESS, DELTA, DONE }
+    /** 流事件类型；PROGRESS 为准备阶段进度，ERROR 为改写失败后的终止事件。 */
+    public enum Type { START, PROGRESS, DELTA, DONE, ERROR }
 
     /** 创建会话已建立的 START 事件；进度字段留空。 */
     public static ChatStreamEvent start(ChatPreparation preparation) {
@@ -54,5 +54,16 @@ public record ChatStreamEvent(Type type, String conversationId,
         return new ChatStreamEvent(Type.DONE, preparation.conversationId(), null,
                 preparation.userMessageId(), assistantMessageId, null,
                 tokenCount, modelName, null, null);
+    }
+
+    /**
+     * 创建 ERROR 事件。
+     *
+     * <p>查询改写失败时在 START/PROGRESS 之后发送，然后结束流。
+     * 不生成助手回答，也不写入虚假引用。content 固定为安全文案。</p>
+     */
+    public static ChatStreamEvent error(ChatPreparation preparation, String content) {
+        return new ChatStreamEvent(Type.ERROR, preparation.conversationId(), null,
+                preparation.userMessageId(), null, content, null, null, null, null);
     }
 }

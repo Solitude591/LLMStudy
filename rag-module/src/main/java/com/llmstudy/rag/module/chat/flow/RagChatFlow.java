@@ -60,7 +60,7 @@ public class RagChatFlow implements ChatFlow {
                 ragProgressStage -> progress.accept(toChatProgress(ragProgressStage)));
         // 空检索结果不再请求 LLM，避免模型在无证据时自由发挥。
         return new FlowPreparation(result.prompt(),
-                result.rewrittenQuery().rewrittenQuestion(), result.references(),
+                result.queryPlan().standaloneZh(), result.references(),
                 result.empty() ? NO_KNOWLEDGE_ANSWER : null);
     }
 

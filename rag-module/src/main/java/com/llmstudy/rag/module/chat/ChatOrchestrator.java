@@ -19,6 +19,7 @@ import com.llmstudy.rag.module.chat.stream.ChatStreamExecutor;
 import com.llmstudy.rag.module.chat.title.TitleSummaryService;
 import com.llmstudy.rag.module.llm.LlmFileLoggingAdvisor;
 import com.llmstudy.rag.module.llm.LlmTraceContext;
+import com.llmstudy.rag.module.rag.query.QueryRewriteException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -209,6 +210,13 @@ public class ChatOrchestrator {
                     }
                     prepared.set(preparation);
                     sink.complete();
+                } catch (QueryRewriteException e) {
+                    // 已经发过 START/PROGRESS，用 typed ERROR 结束流，避免前端只看到连接断开。
+                    if (!sink.isCancelled()) {
+                        sink.next(ChatStreamEvent.error(
+                                start, QueryRewriteException.SAFE_MESSAGE));
+                        sink.complete();
+                    }
                 } catch (Throwable error) {
                     if (!sink.isCancelled()) {
                         sink.error(error);
@@ -224,8 +232,8 @@ public class ChatOrchestrator {
                 progressFlux.concatWith(Flux.defer(() -> {
                     ChatPreparation preparation = prepared.get();
                     if (preparation == null) {
-                        return Flux.error(new IllegalStateException(
-                                "流式准备完成但缺少 ChatPreparation"));
+                        // 改写失败已在 progressFlux 发出 ERROR 并 complete，不再拼接模型流。
+                        return Flux.empty();
                     }
                     return streamExecutor.execute(preparation);
                 })));

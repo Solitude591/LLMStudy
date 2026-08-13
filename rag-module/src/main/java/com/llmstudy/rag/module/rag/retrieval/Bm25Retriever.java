@@ -21,7 +21,6 @@ import java.util.Map;
 public class Bm25Retriever {
 
     private static final Logger log = LoggerFactory.getLogger(Bm25Retriever.class);
-    private static final int RESULTS_PER_CHANNEL = 5;
     private final ElasticsearchClient client;
     private final ElasticsearchProperties properties;
 
@@ -31,41 +30,53 @@ public class Bm25Retriever {
     }
 
     /**
-     * 使用用户原问题检索 text 字段，保留专有名词与精确字面匹配。
+     * 无版本过滤的兼容入口，主要供单测使用。
      *
-     * @param originalQuestion 未改写的用户问题
+     * @param question 检索文本
      * @return 按 Elasticsearch 相关分数排序的候选
-     * @throws IOException Elasticsearch 请求失败
      */
-    public List<RetrievalCandidate> retrieve(String originalQuestion) throws IOException {
-        return search(originalQuestion, null);
+    public List<RetrievalCandidate> retrieve(String question) throws IOException {
+        return search(question, null, 10);
     }
 
-    /** 仅在当前已发布版本集合内执行词面检索。 */
-    public List<RetrievalCandidate> retrieve(String originalQuestion,
-                                             List<String> currentVersionIds) throws IOException {
-        if (currentVersionIds == null || currentVersionIds.isEmpty()) {
+    /**
+     * 在指定已发布版本集合内执行词面检索。
+     *
+     * @param question          中文或英文独立查询
+     * @param currentVersionIds 当前可读版本快照；{@code null} 表示不加版本过滤
+     * @param topK              本路最多返回条数
+     * @return 原始 BM25 命中；空版本集合由上层短路，此处再防一层
+     */
+    public List<RetrievalCandidate> retrieve(String question, List<String> currentVersionIds,
+                                             int topK) throws IOException {
+        if (currentVersionIds != null && currentVersionIds.isEmpty()) {
             return List.of();
         }
-        return search(originalQuestion, currentVersionIds);
+        return search(question, currentVersionIds, topK);
     }
 
-    private List<RetrievalCandidate> search(String originalQuestion,
-                                            List<String> currentVersionIds) throws IOException {
+    /**
+     * 对 text 字段做 match 查询。
+     *
+     * <p>{@code currentVersionIds == null} 时不加 filter，保持单测和独立调用语义。
+     * 有快照时必须用同一份 version_id 集合，避免和 KNN 权限漂移。</p>
+     */
+    private List<RetrievalCandidate> search(String question, List<String> currentVersionIds,
+                                            int topK) throws IOException {
         SearchResponse<Document> response = client.search(request -> request
                         .index(properties.getIndexName())
                         .query(query -> currentVersionIds == null
                                 ? query.match(match -> match
-                                        .field("text").query(originalQuestion))
+                                        .field("text").query(question))
                                 : query.bool(bool -> bool
                                         .must(must -> must.match(match -> match
-                                                .field("text").query(originalQuestion)))
+                                                .field("text").query(question)))
                                         .filter(filter -> filter.terms(terms -> terms
                                                 .field("metadata.version_id.keyword")
                                                 .terms(values -> values.value(currentVersionIds.stream()
                                                         .map(FieldValue::of)
                                                         .toList()))))))
-                        .size(RESULTS_PER_CHANNEL),
+                        .size(Math.max(1, topK)),
                 Document.class);
         List<RetrievalCandidate> candidates = new ArrayList<>();
         // 在适配器边界过滤不完整 ES 文档，不让无效候选流入融合阶段。

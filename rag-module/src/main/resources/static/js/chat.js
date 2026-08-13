@@ -1314,6 +1314,12 @@
                     updateMessageNode(assistantMessage);
                     receivedDone = true;
                     break;
+                case "ERROR":
+                    // 改写失败等：后端已结束流且不会再发 DONE；向上抛出安全文案。
+                    assistantMessage.progressMessage = null;
+                    assistantMessage.pending = false;
+                    updateMessageNode(assistantMessage);
+                    throw new Error(event.content || "模型内部错误");
                 default:
                     console.debug("忽略未知 SSE 事件", event);
             }
@@ -1383,11 +1389,14 @@
             .map(line => line.slice(5).trimStart());
         const raw = dataLines.length > 0 ? dataLines.join("\n") : block;
         if (!raw || raw === "[DONE]") return;
+        let event;
         try {
-            onEvent(JSON.parse(raw));
+            event = JSON.parse(raw);
         } catch (_) {
             throw new Error(`无法解析流式事件：${raw.slice(0, 160)}`);
         }
+        // 事件处理异常（例如后端 ERROR 事件）必须原样向上传递，不能伪装成 JSON 解析失败。
+        onEvent(event);
     }
 
     async function readJsonResponse(response) {

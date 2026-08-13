@@ -140,9 +140,15 @@ rag:
     # pair 分词最大长度与推理批次大小
     max-length: ${BGE_RERANKER_MAX_LENGTH:512}
     batch-size: ${BGE_RERANKER_BATCH_SIZE:4}
-    # RRF 后进入 ReRanker 的候选数与 ReRanker 后返回的条数
-    candidate-count: ${BGE_RERANKER_CANDIDATE_COUNT:10}
-    top-n: ${BGE_RERANKER_TOP_N:8}
+
+  retrieval:
+    per-query-top-k: 10
+    fusion-candidate-count: 40
+    rerank-candidate-count: 20
+    top-n: 8
+    rrf-k: 60
+    bge-rank-weight: 0.85
+    retrieval-rerank-weight: 0.15
 
 logging:
   level:

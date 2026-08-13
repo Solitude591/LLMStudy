@@ -22,7 +22,8 @@
       },
       "text": {
         "type": "text",
-        "analyzer": "standard"
+        "analyzer": "ik_max_word",
+        "search_analyzer": "ik_smart"
       },
       "metadata": {
         "type": "object",

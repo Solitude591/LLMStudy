@@ -5,7 +5,7 @@ import com.llmstudy.rag.module.llm.model.LlmPrompt;
 import java.util.List;
 
 /** 在线 RAG Pipeline 的最终输出。 */
-public record RagResult(LlmPrompt prompt, RewrittenQuery rewrittenQuery,
+public record RagResult(LlmPrompt prompt, RetrievalQueryPlan queryPlan,
                         List<RagReference> references, List<String> chunks) {
 
     public RagResult {

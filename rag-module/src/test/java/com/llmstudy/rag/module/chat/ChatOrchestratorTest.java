@@ -23,6 +23,7 @@ import com.llmstudy.rag.module.chat.stream.ChatStreamExecutor;
 import com.llmstudy.rag.module.chat.title.TitleSummaryService;
 import com.llmstudy.rag.module.llm.model.LlmPrompt;
 import com.llmstudy.rag.module.rag.model.RagReference;
+import com.llmstudy.rag.module.rag.query.QueryRewriteException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -221,6 +222,24 @@ class ChatOrchestratorTest {
                 progress.stream().map(ChatStreamEvent::progressName).toList());
         assertEquals(ChatProgressStage.KNOWLEDGE_RETRIEVAL.message(),
                 progress.get(2).progressMessage());
+    }
+
+    @Test
+    void streamRewriteFailureEmitsErrorAndSkipsAnswer() {
+        when(recognizer.recognize("question", List.of())).thenReturn(
+                new IntentRecognitionResult(true, ChatIntent.PAPER_CONTENT_QA,
+                        "qa", null, false));
+        when(ragFlow.prepare(any(ChatFlowContext.class), any()))
+                .thenThrow(new QueryRewriteException("bad json"));
+
+        List<ChatStreamEvent> events = orchestrator.stream(
+                        new ChatCommand(null, "user", "question"))
+                .collectList().block();
+
+        assertEquals(ChatStreamEvent.Type.START, events.getFirst().type());
+        assertEquals(ChatStreamEvent.Type.ERROR, events.getLast().type());
+        assertEquals(QueryRewriteException.SAFE_MESSAGE, events.getLast().content());
+        verify(executor, never()).execute(any());
     }
 
     @Test

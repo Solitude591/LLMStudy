@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- 诊断与在线检索共用 MDC traceId，便于用响应里的 ID 检索服务端日志。 -->
+    <property name="CONSOLE_LOG_PATTERN"
+              value="%clr(%d{${LOG_DATEFORMAT_PATTERN:-yyyy-MM-dd'T'HH:mm:ss.SSSXXX}}){faint} %clr(${LOG_LEVEL_PATTERN:-%5p}) %clr(${PID:- }){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr([traceId=%X{traceId:-}]){yellow} %clr(:){faint} %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}"/>
+
     <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
 
     <springProperty scope="context"
@@ -14,7 +19,7 @@
         <append>true</append>
         <encoder>
             <charset>UTF-8</charset>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [traceId=%X{traceId:-}] %msg%n</pattern>
         </encoder>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${LLM_LOG_PATH}/llm-calls.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
@@ -29,6 +34,8 @@
         <discardingThreshold>0</discardingThreshold>
         <neverBlock>false</neverBlock>
         <appender-ref ref="LLM_ROLLING_FILE"/>
+        <!-- 异步 appender 默认不复制 MDC，必须显式打开才能把 traceId 写进 LLM 文件日志。 -->
+        <includeCallerData>false</includeCallerData>
     </appender>
 
     <logger name="LLM_CALL_FILE" level="INFO" additivity="false">

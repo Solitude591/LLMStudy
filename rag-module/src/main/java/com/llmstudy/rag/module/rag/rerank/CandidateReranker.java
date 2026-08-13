@@ -8,9 +8,9 @@ import java.util.List;
 public interface CandidateReranker {
 
     /**
-     * @param question   用于评分的用户原问题
-     * @param candidates 已按 RRF 或单通道分数排序的候选
-     * @return 重排后候选；禁用或失败时应保留输入顺序
+     * @param question   双语检索查询（中英文独立查询拼接）
+     * @param candidates parent 分组后的代表 child
+     * @return 结构化重排结果；失败时 {@code used=false} 且带稳定 reason，不中断问答
      */
-    List<RetrievalCandidate> rerank(String question, List<RetrievalCandidate> candidates);
+    RerankResult rerank(String question, List<RetrievalCandidate> candidates);
 }

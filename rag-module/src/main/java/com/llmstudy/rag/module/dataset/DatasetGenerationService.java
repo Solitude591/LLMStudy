@@ -1,6 +1,5 @@
 package com.llmstudy.rag.module.dataset;
 
-import com.llmstudy.rag.auth.model.AccessContext;
 import com.llmstudy.rag.dto.DatasetGenerateResponse;
 import com.llmstudy.rag.module.chat.flow.RagChatFlow;
 import com.llmstudy.rag.module.chat.stream.ChatStreamExecutor;
@@ -29,24 +28,23 @@ public class DatasetGenerationService {
     /**
      * 对单个问题执行完整 RAG 检索并生成回答。
      *
-     * @param query         用户原始问题
-     * @param accessContext 入口线程捕获的访问身份，用于检索权限过滤
+     * <p>公开评测接口不携带登录身份；{@code accessContext} 传 {@code null}，
+     * 检索使用全部已发布版本（见 {@code HybridRetriever}）。</p>
+     *
+     * @param query 用户原始问题
      * @return 原始问题、模型回答与最终 chunk 正文
      */
-    public DatasetGenerateResponse generate(String query, AccessContext accessContext) {
+    public DatasetGenerateResponse generate(String query) {
         if (query == null || query.isBlank()) {
             throw new IllegalArgumentException("用户问题不能为空");
         }
         String originalQuery = query.trim();
-        if (accessContext == null) {
-            throw new IllegalArgumentException("访问上下文不能为空");
-        }
 
         RagResult result = ragPipeline.execute(new RagRequest(
                 originalQuery,
                 "无",
                 RagIntentContext.generic(),
-                accessContext));
+                null));
 
         if (result.empty()) {
             return new DatasetGenerateResponse(

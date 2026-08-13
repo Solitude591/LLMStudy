@@ -3,7 +3,7 @@ package com.llmstudy.rag.module.chat.flow;
 import com.llmstudy.rag.module.rag.RagPipeline;
 import com.llmstudy.rag.module.rag.model.RagResult;
 import com.llmstudy.rag.module.rag.model.RagAnswerMode;
-import com.llmstudy.rag.module.rag.model.RewrittenQuery;
+import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
 import com.llmstudy.rag.module.chat.model.ChatIntent;
 import com.llmstudy.rag.module.chat.model.IntentKeyInformation;
 import com.llmstudy.rag.module.chat.model.IntentRecognitionResult;
@@ -33,7 +33,7 @@ class ChatFlowTest {
     void ragFlowReturnsControlledAnswerForEmptyRetrieval() {
         RagPipeline pipeline = mock(RagPipeline.class);
         when(pipeline.execute(any(), any())).thenReturn(new RagResult(null,
-                new RewrittenQuery("q", "rewritten"), List.of(), List.of()));
+                new RetrievalQueryPlan("q", "rewritten", "rewritten en"), List.of(), List.of()));
 
         ChatFlow.FlowPreparation result = new RagChatFlow(pipeline)
                 .prepare("q", List.of());

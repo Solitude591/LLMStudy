@@ -2,6 +2,7 @@ package com.llmstudy.rag.config;
 
 import com.llmstudy.rag.dto.ApiResult;
 import com.llmstudy.rag.module.knowledge.document.DocumentVersionConflictException;
+import com.llmstudy.rag.module.rag.query.QueryRewriteException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -32,6 +33,16 @@ public class GlobalExceptionHandler {
     public ApiResult<Void> handleDocumentVersionConflict(DocumentVersionConflictException e) {
         log.warn("文档版本发布冲突: {}", e.getMessage());
         return ApiResult.fail(409, e.getMessage());
+    }
+
+    /**
+     * 查询改写失败：对外只返回固定安全文案，详细原因已在异常 cause 中。
+     */
+    @ExceptionHandler(QueryRewriteException.class)
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+    public ApiResult<Void> handleQueryRewrite(QueryRewriteException e) {
+        log.error("查询改写失败", e);
+        return ApiResult.fail(500, QueryRewriteException.SAFE_MESSAGE);
     }
 
     /**

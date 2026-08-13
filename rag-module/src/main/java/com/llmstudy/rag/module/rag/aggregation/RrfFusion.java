@@ -3,50 +3,58 @@ package com.llmstudy.rag.module.rag.aggregation;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
 import org.springframework.stereotype.Component;
 
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 确定性的 Reciprocal Rank Fusion（RRF）实现。 */
+/**
+ * 多路 Reciprocal Rank Fusion。
+ *
+ * <p>只使用名次，不混合不可比的 BM25 与向量原始分数。
+ * 同一 chunk 多路命中时累加 {@code 1/(k+rank)}，rank 从 1 开始。</p>
+ */
 @Component
 public class RrfFusion {
 
-    private static final int K = 60;
-
     /**
-     * 按候选在每条通道中的名次计算 RRF 分数，同 ID 候选自动合并得分。
+     * 按四路（或更少成功路）名次融合。
      *
-     * @param first  第一条通道的有序候选
-     * @param second 第二条通道的有序候选
-     * @param limit  融合后候选数上限
-     * @return 按 RRF 分数降序排列的候选
+     * @param lanes 每路已按该路原始分排序的命中
+     * @param limit 融合后最多保留条数
+     * @param k     RRF 平滑项，配置默认 60
+     * @return 按 rrfScore、命中路数、最佳名次、chunk ID 排序的候选
      */
-    public List<RetrievalCandidate> fuse(List<RetrievalCandidate> first,
-                                         List<RetrievalCandidate> second,
-                                         int limit) {
-        Map<String, Double> scores = new LinkedHashMap<>();
-        Map<String, RetrievalCandidate> candidates = new LinkedHashMap<>();
-        // LinkedHashMap 保留首次命中顺序，使同分时的输出稳定可测。
-        contribute(first, scores, candidates);
-        contribute(second, scores, candidates);
-        return scores.entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .limit(limit)
-                .map(entry -> {
-                    RetrievalCandidate candidate = candidates.get(entry.getKey());
-                    return new RetrievalCandidate(candidate.id(), candidate.text(),
-                            candidate.metadata(), entry.getValue(), null);
-                }).toList();
+    public List<RetrievalCandidate> fuse(List<List<RetrievalCandidate>> lanes,
+                                         int limit, int k) {
+        Map<String, Acc> merged = new LinkedHashMap<>();
+        for (List<RetrievalCandidate> lane : lanes) {
+            for (int index = 0; index < lane.size(); index++) {
+                RetrievalCandidate hit = lane.get(index);
+                int rank = index + 1;
+                Acc acc = merged.get(hit.id());
+                if (acc == null) {
+                    // 首次命中保留该路的原文和 rawScore，后续只加 RRF 贡献。
+                    merged.put(hit.id(), new Acc(hit, 1.0 / (k + rank), 1, rank));
+                } else {
+                    merged.put(hit.id(), new Acc(acc.first,
+                            acc.rrf + 1.0 / (k + rank),
+                            acc.hitCount + 1,
+                            Math.min(acc.bestRank, rank)));
+                }
+            }
+        }
+        return merged.values().stream()
+                .sorted(Comparator.comparingDouble(Acc::rrf).reversed()
+                        .thenComparing(Comparator.comparingInt(Acc::hitCount).reversed())
+                        .thenComparingInt(Acc::bestRank)
+                        .thenComparing(acc -> acc.first.id()))
+                .limit(Math.max(1, limit))
+                .map(acc -> acc.first.withRrfScore(acc.rrf))
+                .toList();
     }
 
-    /** 将单通道的名次贡献累加到候选总分。 */
-    private void contribute(List<RetrievalCandidate> source,
-                            Map<String, Double> scores,
-                            Map<String, RetrievalCandidate> candidates) {
-        for (int index = 0; index < source.size(); index++) {
-            RetrievalCandidate candidate = source.get(index);
-            scores.merge(candidate.id(), 1.0 / (K + index + 1), Double::sum);
-            candidates.putIfAbsent(candidate.id(), candidate);
-        }
+    /** 融合过程中的累加器；不泄漏到候选模型上。 */
+    private record Acc(RetrievalCandidate first, double rrf, int hitCount, int bestRank) {
     }
 }

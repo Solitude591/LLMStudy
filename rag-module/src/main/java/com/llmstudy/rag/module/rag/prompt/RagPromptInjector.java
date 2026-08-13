@@ -6,7 +6,7 @@ import com.llmstudy.rag.module.rag.model.RagReference;
 import com.llmstudy.rag.module.rag.model.RagFocusInformation;
 import com.llmstudy.rag.module.rag.model.RagRequest;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
-import com.llmstudy.rag.module.rag.model.RewrittenQuery;
+import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
 import com.llmstudy.rag.module.llm.model.LlmPrompt;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.slf4j.Logger;
@@ -32,11 +32,11 @@ public class RagPromptInjector {
      * 根据已排序候选生成最终 Prompt 和引用列表。
      *
      * @param request    包含原问题与意图策略的 RAG 请求
-     * @param rewritten  查询改写结果，保留参数以明确 Pipeline 阶段边界
+     * @param plan       查询改写结果，保留参数以明确 Pipeline 阶段边界
      * @param candidates 聚合、重排并截断后的候选
      * @return 可交给 LLM 的 Prompt 与按编号对齐的引用
      */
-    public Injection inject(RagRequest request, RewrittenQuery rewritten,
+    public Injection inject(RagRequest request, RetrievalQueryPlan plan,
                             List<RetrievalCandidate> candidates) {
         if (candidates.isEmpty()) {
             return new Injection(null, List.of());
@@ -63,7 +63,7 @@ public class RagPromptInjector {
                     .append("正文:\n").append(candidate.text()).append("\n\n");
             references.add(new RagReference(citation, docId, chunkId,
                     headerPath, sourceUrl, pageStart, pageEnd,
-                    candidate.score(), candidate.rerankedScore()));
+                    candidate.citationScore(), candidate.bgeScore()));
         }
         RagPromptTemplateRegistry.TemplateSelection selection =
                 templateRegistry.select(request.intentContext().answerMode());

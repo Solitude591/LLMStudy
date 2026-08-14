@@ -4,6 +4,7 @@ import com.llmstudy.rag.dto.DocumentSplitResult;
 import com.llmstudy.rag.dto.MineruContentElement;
 import com.llmstudy.rag.entity.KnowledgeDocumentVersion;
 import com.llmstudy.rag.entity.KnowledgeSegment;
+import com.llmstudy.rag.enums.DocumentLanguage;
 import com.llmstudy.rag.enums.DocumentStatus;
 import com.llmstudy.rag.enums.SegmentStatus;
 import com.llmstudy.rag.mapper.KnowledgeDocumentVersionMapper;
@@ -101,15 +102,19 @@ public class DocumentChunkingService {
             throw new DocumentStageAlreadyRunningException("版本分片阶段已经被抢占: " + versionId);
         }
         try {
-            List<KnowledgeChunk> chunks = splitVersion(version);
-            if (chunks.isEmpty()) {
+            SplitOutcome outcome = splitVersion(version);
+            if (outcome.chunks().isEmpty()) {
                 throw new IllegalStateException("版本未生成任何分片: " + versionId);
             }
-            List<KnowledgeSegment> segments = toEntities(version, chunks);
+            List<KnowledgeSegment> segments = toEntities(version, outcome.chunks());
             transactionTemplate.executeWithoutResult(status -> {
                 int inserted = segmentMapper.batchInsert(segments);
                 if (inserted != segments.size()) {
                     throw new IllegalStateException("分片保存数量不一致");
+                }
+                if (versionMapper.updateLanguage(
+                        versionId, outcome.language().value()) != 1) {
+                    throw new IllegalStateException("回写版本语言失败: " + versionId);
                 }
                 if (versionMapper.compareAndSetProcessingStatusAndClearError(
                         versionId, DocumentStatus.CHUNKED, DocumentStatus.SPLITTING) != 1) {
@@ -127,21 +132,29 @@ public class DocumentChunkingService {
     }
 
     /** 主路径 content_list；失败或空结果时回退 Markdown AST。 */
-    private List<KnowledgeChunk> splitVersion(KnowledgeDocumentVersion version) {
-        List<KnowledgeChunk> fromContentList = trySplitContentList(version);
-        if (!fromContentList.isEmpty()) {
-            return fromContentList;
+    private SplitOutcome splitVersion(KnowledgeDocumentVersion version) {
+        List<MineruContentElement> elements = tryLoadContentList(version);
+        if (!elements.isEmpty()) {
+            List<KnowledgeChunk> chunks = contentListChunker.split(elements);
+            if (!chunks.isEmpty()) {
+                return new SplitOutcome(
+                        chunks, DocumentLanguageDetector.fromContentList(elements));
+            }
+            log.warn("content_list 未产出分片，回退 Markdown: versionId={}",
+                    version.getVersionId());
         }
         log.info("回退 Markdown AST 分片: versionId={}", version.getVersionId());
         String markdown = downloadText(version.getConvertedDocUrl());
-        return markdownChunker.split(markdown);
+        return new SplitOutcome(
+                markdownChunker.split(markdown),
+                DocumentLanguageDetector.fromMarkdown(markdown));
     }
 
     /**
-     * 尝试 content_list 分片。任何下载/解析/空结果都返回空列表，由调用方回退，
+     * 下载并解析 content_list。任何失败或空结果都返回空列表，由调用方回退，
      * 不把 content_list 故障升级为整版本失败。
      */
-    private List<KnowledgeChunk> trySplitContentList(KnowledgeDocumentVersion version) {
+    private List<MineruContentElement> tryLoadContentList(KnowledgeDocumentVersion version) {
         String contentListUrl = version.getContentListUrl();
         if (contentListUrl == null || contentListUrl.isBlank()) {
             return List.of();
@@ -155,17 +168,15 @@ public class DocumentChunkingService {
                 log.warn("content_list 为空，回退 Markdown: versionId={}", version.getVersionId());
                 return List.of();
             }
-            List<KnowledgeChunk> chunks = contentListChunker.split(elements);
-            if (chunks.isEmpty()) {
-                log.warn("content_list 未产出分片，回退 Markdown: versionId={}",
-                        version.getVersionId());
-            }
-            return chunks;
+            return elements;
         } catch (Exception e) {
             log.warn("content_list 下载或解析失败，回退 Markdown: versionId={}, cause={}",
                     version.getVersionId(), e.toString());
             return List.of();
         }
+    }
+
+    private record SplitOutcome(List<KnowledgeChunk> chunks, DocumentLanguage language) {
     }
 
     /** 下载 UTF-8 文本（Markdown 或 content_list JSON）。 */

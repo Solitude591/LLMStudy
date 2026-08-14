@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -87,15 +88,26 @@ public class BgeScoringModel implements ScoringModel, AutoCloseable {
      */
     @Override
     public Response<List<Double>> scoreAll(List<TextSegment> segments, String query) {
-        // 模型禁用时直接抛异常，由检索器记录原因并回退原排序。
-        if (!properties.isEnabled()) {
-            throw new IllegalStateException("BGE ReRanker 已禁用");
-        }
         if (query == null || query.isBlank()
                 || segments == null || segments.isEmpty()) {
             return Response.from(List.of());
         }
-        // 惰性加载模型与 tokenizer；文件缺失或加载失败时抛出统一异常。
+        return scorePairs(Collections.nCopies(segments.size(), query), segments);
+    }
+
+    /**
+     * 按候选构造 (query, document) pair，同一批次推理以便混合语言分数可直接排序。
+     */
+    public Response<List<Double>> scorePairs(List<String> queries, List<TextSegment> segments) {
+        if (!properties.isEnabled()) {
+            throw new IllegalStateException("BGE ReRanker 已禁用");
+        }
+        if (queries == null || segments == null || queries.size() != segments.size()) {
+            throw new IllegalStateException("BGE pair 数量不一致");
+        }
+        if (segments.isEmpty()) {
+            return Response.from(List.of());
+        }
         OrtSession ortSession = getOrCreateSession();
         HuggingFaceTokenizer hfTokenizer = getOrCreateTokenizer();
 
@@ -104,11 +116,12 @@ public class BgeScoringModel implements ScoringModel, AutoCloseable {
         if (batchSize <= 0) {
             throw new IllegalStateException("rag.reranker.batch-size 必须大于 0");
         }
-        // 分批推理：每批最多 batchSize 个候选，批内按最长序列动态 padding。
         for (int start = 0; start < segments.size(); start += batchSize) {
-            List<TextSegment> batch = segments.subList(
-                    start, Math.min(start + batchSize, segments.size()));
-            float[] batchLogits = scoreBatch(ortSession, hfTokenizer, query, batch);
+            int end = Math.min(start + batchSize, segments.size());
+            float[] batchLogits = scoreBatch(
+                    ortSession, hfTokenizer,
+                    queries.subList(start, end),
+                    segments.subList(start, end));
             for (float logit : batchLogits) {
                 scores.add(sigmoid(logit));
             }
@@ -125,20 +138,20 @@ public class BgeScoringModel implements ScoringModel, AutoCloseable {
      *
      * @param ortSession 已加载的 ONNX session
      * @param hfTokenizer 已加载的 DJL tokenizer
-     * @param query       用户原问题
+     * @param queries     与 batch 等长的查询
      * @param batch       本批候选
      * @return 每个候选的 logit
      */
     private float[] scoreBatch(OrtSession ortSession, HuggingFaceTokenizer hfTokenizer,
-                               String query, List<TextSegment> batch) {
+                               List<String> queries, List<TextSegment> batch) {
         // 对批内每个候选做 (query, candidate) pair 分词，记录批内最大序列长度。
         List<long[]> idsList = new ArrayList<>(batch.size());
         List<long[]> masksList = new ArrayList<>(batch.size());
         List<long[]> typeIdsList = new ArrayList<>(batch.size());
         int maxSeqLen = 0;
-        for (TextSegment segment : batch) {
-            // 只截断第二段（候选正文），保留完整用户原问题。
-            Encoding encoding = hfTokenizer.encode(query, segment.text());
+        for (int i = 0; i < batch.size(); i++) {
+            // 只截断第二段（候选正文），保留完整查询。
+            Encoding encoding = hfTokenizer.encode(queries.get(i), batch.get(i).text());
             long[] ids = encoding.getIds() == null ? new long[0] : encoding.getIds();
             long[] masks = encoding.getAttentionMask() == null
                     ? new long[0] : encoding.getAttentionMask();

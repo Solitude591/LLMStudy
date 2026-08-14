@@ -19,6 +19,7 @@ public class KnowledgeDocumentVersion {
     private String rawObjectKey;
     private String convertedDocUrl;
     private String contentListUrl;
+    private String language;
     private String processingStatus;
     private String releaseStatus;
     private String errorMessage;
@@ -115,6 +116,14 @@ public class KnowledgeDocumentVersion {
 
     public void setContentListUrl(String contentListUrl) {
         this.contentListUrl = contentListUrl;
+    }
+
+    public String getLanguage() {
+        return language;
+    }
+
+    public void setLanguage(String language) {
+        this.language = language;
     }
 
     public String getProcessingStatus() {

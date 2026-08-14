@@ -21,5 +21,6 @@ public record DocumentVersionVO(
         LocalDateTime publishedAt,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
+        String language,
         boolean current) {
 }

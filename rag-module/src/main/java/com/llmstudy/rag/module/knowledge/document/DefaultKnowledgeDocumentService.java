@@ -821,6 +821,7 @@ public class DefaultKnowledgeDocumentService implements KnowledgeDocumentService
                 version.getPublishedAt(),
                 version.getCreatedAt(),
                 version.getUpdatedAt(),
+                version.getLanguage(),
                 version.getVersionId().equals(document.getCurrentVersionId()));
     }
 

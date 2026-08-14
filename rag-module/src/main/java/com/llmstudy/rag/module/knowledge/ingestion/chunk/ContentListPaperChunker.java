@@ -16,7 +16,8 @@ import java.util.Set;
  * 以 MinerU {@code content_list.json} 为主输入的论文原子分片器。
  *
  * <p>图片/图表/表格强制独立 standalone 并形成切分边界；公式、代码、列表作为受保护原子块装箱；
- * 普通正文与 ref_text 超限才生成 parent/child。标题只更新 {@code header_path}，不单独成片。</p>
+ * 普通正文超限才生成 parent/child；参考文献章节在分片前丢弃。
+ * 标题只更新 {@code header_path}，不单独成片。</p>
  */
 public class ContentListPaperChunker {
 
@@ -52,12 +53,33 @@ public class ContentListPaperChunker {
         List<KnowledgeChunk> result = new ArrayList<>();
         HeaderPathStack headers = new HeaderPathStack();
         TextBuffer buffer = new TextBuffer();
+        Integer referenceLevel = null;
 
         for (MineruContentElement element : contentList) {
             if (element == null || element.getType() == null) {
                 continue;
             }
             String type = element.getType().toLowerCase(Locale.ROOT);
+
+            if (referenceLevel != null) {
+                boolean nextSection = element.isHeading()
+                        && element.getTextLevel() <= referenceLevel
+                        && !ReferenceSectionMatcher.isReferenceHeading(element.getText());
+                if (!nextSection) {
+                    continue;
+                }
+                referenceLevel = null;
+            }
+            if ("ref_text".equals(type)) {
+                continue;
+            }
+            if ("text".equals(type)
+                    && ReferenceSectionMatcher.isReferenceHeading(element.getText())) {
+                flushText(result, buffer, headers.path());
+                referenceLevel = element.isHeading()
+                        ? element.getTextLevel() : Integer.MAX_VALUE;
+                continue;
+            }
 
             if (element.isHeading()) {
                 // 新标题开始前先冲刷正文，避免跨章节粘连。
@@ -91,8 +113,7 @@ public class ContentListPaperChunker {
                 }
                 continue;
             }
-            if ("text".equals(type) || "ref_text".equals(type)) {
-                // ref_text 是参考文献行，按正文装箱即可，不必单独成片。
+            if ("text".equals(type)) {
                 if (element.getText() != null && !element.getText().isBlank()) {
                     buffer.appendText(element.getText(), pageOf(element));
                 }
@@ -169,7 +190,7 @@ public class ContentListPaperChunker {
             if (!text.isEmpty()) {
                 text.append('\n');
             }
-            text.append(body.strip());
+            text.append(TableNormalizer.normalizeHtml(body));
         } else if (element.getImgPath() != null && !element.getImgPath().isBlank()) {
             // 图片型表格：保留可检索的视觉描述与图片链接。
             if (!text.isEmpty()) {

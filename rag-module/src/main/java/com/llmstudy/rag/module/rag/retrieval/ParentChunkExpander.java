@@ -90,6 +90,7 @@ public class ParentChunkExpander {
         SegmentMetadataMaps.copyString(metadata, merged, SegmentMetadataKeys.DOC_ID);
         SegmentMetadataMaps.copyString(metadata, merged, SegmentMetadataKeys.VERSION_ID);
         SegmentMetadataMaps.copyString(metadata, merged, SegmentMetadataKeys.SOURCE_URL);
+        SegmentMetadataMaps.copyString(metadata, merged, SegmentMetadataKeys.LANGUAGE);
         if (parent.getDocId() != null && !merged.containsKey(SegmentMetadataKeys.DOC_ID)) {
             merged.put(SegmentMetadataKeys.DOC_ID, parent.getDocId());
         }

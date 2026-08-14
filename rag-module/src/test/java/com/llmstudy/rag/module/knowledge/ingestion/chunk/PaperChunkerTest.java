@@ -148,7 +148,8 @@ class ContentListPaperChunkerTest {
         KnowledgeChunk imageChunk = chunks.get(1);
         KnowledgeChunk tableChunk = chunks.get(2);
         assertTrue(imageChunk.text().contains("!["));
-        assertTrue(tableChunk.text().contains("<table>"));
+        assertTrue(tableChunk.text().contains("1"));
+        assertFalse(tableChunk.text().contains("<table>"));
         assertEquals(3, imageChunk.metadata().get(SegmentMetadataKeys.PAGE_START));
         assertEquals(4, tableChunk.metadata().get(SegmentMetadataKeys.PAGE_END));
         assertAllowedMetadataKeys(chunks);
@@ -171,7 +172,7 @@ class ContentListPaperChunkerTest {
     }
 
     @Test
-    void keepsCodeListRefTextAndTableFootnotes() {
+    void keepsCodeListAndTableFootnotesButDropsRefText() {
         SnowflakeIdGenerator ids = new SnowflakeIdGenerator(1);
         ContentListPaperChunker chunker = new ContentListPaperChunker(
                 ids, new MarkdownImageProcessor(), 1000, 100);
@@ -203,12 +204,32 @@ class ContentListPaperChunkerTest {
         assertTrue(packed.contains("普通正文"));
         assertTrue(packed.contains("def f():"));
         assertTrue(packed.contains("- a"));
-        assertTrue(packed.contains("[1] Author"));
+        assertFalse(packed.contains("[1] Author"));
         KnowledgeChunk tableChunk = chunks.get(1);
         assertTrue(tableChunk.text().contains("表 2 参数"));
         assertTrue(tableChunk.text().contains("![参数对照表](https://minio/table.png)"));
         assertTrue(tableChunk.text().contains("脚注: *p<0.05"));
         assertTrue(tableChunk.text().contains("脚注: AUC: area under curve"));
+    }
+
+    @Test
+    void dropsReferenceSectionAndKeepsFollowingAppendix() {
+        ContentListPaperChunker chunker = new ContentListPaperChunker(
+                new SnowflakeIdGenerator(1), new MarkdownImageProcessor(), 1000, 100);
+
+        List<KnowledgeChunk> chunks = chunker.split(List.of(
+                text("Results", 2, 1),
+                text("Useful experimental results.", null, 1),
+                text("References", 2, 8),
+                text("Ronneberger O. U-Net.", null, 8),
+                text("Appendix", 2, 9),
+                text("Supplementary implementation details.", null, 9)));
+
+        String all = chunks.stream().map(KnowledgeChunk::text)
+                .collect(Collectors.joining("\n"));
+        assertTrue(all.contains("Useful experimental results"));
+        assertFalse(all.contains("Ronneberger"));
+        assertTrue(all.contains("Supplementary implementation details"));
     }
 
     private static MineruContentElement text(String value, Integer level, int pageIdx) {
@@ -335,6 +356,38 @@ class MarkdownAstPaperChunkerTest {
         assertTrue(tableChunk.text().contains("| Metric | Value |"));
         assertTrue(tableChunk.text().contains("| HD95 | 12.3 |"));
         assertFalse(tableChunk.metadata().containsKey(SegmentMetadataKeys.PARENT_CHUNK_ID));
+    }
+
+    @Test
+    void dropsReferenceSectionAndKeepsFollowingAppendix() {
+        MarkdownAstPaperChunker chunker = new MarkdownAstPaperChunker(
+                new SnowflakeIdGenerator(1), 1000, 100);
+        String markdown = """
+                # Paper
+
+                ## Results
+
+                Useful experimental results.
+
+                ## References
+
+                Ronneberger O. U-Net.
+
+                ### Reference notes
+
+                More citation details.
+
+                ## Appendix
+
+                Supplementary implementation details.
+                """;
+
+        String all = chunker.split(markdown).stream().map(KnowledgeChunk::text)
+                .collect(Collectors.joining("\n"));
+        assertTrue(all.contains("Useful experimental results"));
+        assertFalse(all.contains("Ronneberger"));
+        assertFalse(all.contains("More citation details"));
+        assertTrue(all.contains("Supplementary implementation details"));
     }
 }
 

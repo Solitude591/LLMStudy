@@ -77,11 +77,29 @@ public class MarkdownAstPaperChunker {
         List<KnowledgeChunk> result = new ArrayList<>();
         HeaderPathStack headers = new HeaderPathStack();
         TextBuffer buffer = new TextBuffer();
+        Integer referenceLevel = null;
 
         for (Node block = document.getFirstChild(); block != null; block = block.getNext()) {
             if (block instanceof Heading heading) {
+                String title = headingText(heading);
+                if (referenceLevel != null) {
+                    boolean nextSection = heading.getLevel() <= referenceLevel
+                            && !ReferenceSectionMatcher.isReferenceHeading(title);
+                    if (!nextSection) {
+                        continue;
+                    }
+                    referenceLevel = null;
+                }
+                if (ReferenceSectionMatcher.isReferenceHeading(title)) {
+                    flush(result, buffer, headers.path());
+                    referenceLevel = heading.getLevel();
+                    continue;
+                }
                 flush(result, buffer, headers.path());
-                headers.push(heading.getLevel(), headingText(heading));
+                headers.push(heading.getLevel(), title);
+                continue;
+            }
+            if (referenceLevel != null) {
                 continue;
             }
             if (block instanceof ThematicBreak) {
@@ -93,7 +111,8 @@ public class MarkdownAstPaperChunker {
                 String source = sourceOf(block, normalized, lineOffsets);
                 if (source != null && !source.isBlank()) {
                     flush(result, buffer, headers.path());
-                    result.add(emitter.standalone(source.strip(), headers.path(), null, null));
+                    result.add(emitter.standalone(
+                            TableNormalizer.normalizeGfm(source), headers.path(), null, null));
                 }
                 continue;
             }
@@ -105,7 +124,9 @@ public class MarkdownAstPaperChunker {
                 // MinerU 表格常以 HTML block 出现；整表 standalone，禁止二次切开。
                 if (TABLE_HTML.matcher(source).find()) {
                     flush(result, buffer, headers.path());
-                    result.add(emitter.standalone(source.strip(), headers.path(), null, null));
+                    result.add(emitter.standalone(
+                            TableNormalizer.normalizeHtml(source.strip()),
+                            headers.path(), null, null));
                 } else {
                     buffer.appendAtomic(source.strip());
                 }

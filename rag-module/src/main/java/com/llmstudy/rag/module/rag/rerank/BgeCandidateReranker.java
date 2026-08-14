@@ -1,8 +1,10 @@
 package com.llmstudy.rag.module.rag.rerank;
 
 import com.llmstudy.rag.config.RerankerProperties;
+import com.llmstudy.rag.enums.DocumentLanguage;
 import com.llmstudy.rag.module.knowledge.model.SegmentMetadataKeys;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
+import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
 import dev.langchain4j.data.segment.TextSegment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,30 +34,32 @@ public class BgeCandidateReranker implements CandidateReranker {
     }
 
     /**
-     * 用双语查询对代表 child 打分。
+     * 按候选文档语言选择查询，对代表 child 打分。
      *
-     * <p>每个候选的 BGE 文档为 {@code header_path + 换行 + child 正文}。
+     * <p>每个候选的 BGE 文档为 {@code 末级标题 + 换行 + child 正文}。
      * 失败不抛给问答主流程，但 reason 会进入诊断 failures。</p>
      */
     @Override
-    public RerankResult rerank(String question, List<RetrievalCandidate> candidates) {
+    public RerankResult rerank(RetrievalQueryPlan plan, List<RetrievalCandidate> candidates) {
         long started = System.nanoTime();
         List<RetrievalCandidate> safe = candidates == null ? List.of() : candidates;
         if (!properties.isEnabled()) {
             return RerankResult.fallback("disabled", elapsedMs(started), safe);
         }
-        // 0/1 个候选不存在排序收益，避免无效加载本地模型。
         if (safe.size() <= 1) {
             return RerankResult.fallback("too-few-candidates", elapsedMs(started), safe);
         }
-        if (question == null || question.isBlank()) {
+        if (plan == null) {
             return RerankResult.fallback("blank-query", elapsedMs(started), safe);
         }
         try {
+            List<String> queries = safe.stream()
+                    .map(candidate -> queryFor(plan, candidate))
+                    .toList();
             List<TextSegment> segments = safe.stream()
                     .map(BgeCandidateReranker::document)
                     .toList();
-            List<Double> scores = scoringModel.scoreAll(segments, question).content();
+            List<Double> scores = scoringModel.scorePairs(queries, segments).content();
             if (scores == null || scores.size() != safe.size()) {
                 log.warn("BGE 评分数量不一致，保持 RRF 排序");
                 return RerankResult.fallback("score-count-mismatch", elapsedMs(started), safe);
@@ -72,17 +76,47 @@ public class BgeCandidateReranker implements CandidateReranker {
             return RerankResult.success(ranked, elapsedMs(started));
         } catch (Exception e) {
             log.warn("BGE ReRanker 执行失败，保持 RRF 排序", e);
-            // 对外只返回稳定短码；异常类型、消息和堆栈仅保留在带 traceId 的服务端日志。
             return RerankResult.fallback("inference-error", elapsedMs(started), safe);
         }
     }
 
-    /** 章节路径为空时只送 child 正文，避免出现前导空行。 */
+    static String queryFor(RetrievalQueryPlan plan, RetrievalCandidate candidate) {
+        Object raw = candidate.metadata().get(SegmentMetadataKeys.LANGUAGE);
+        return switch (DocumentLanguage.fromValue(raw == null ? null : raw.toString())) {
+            case ZH -> plan.standaloneZh();
+            case EN -> plan.standaloneEn();
+            case UNKNOWN -> bilingual(plan);
+        };
+    }
+
+    static String bilingual(RetrievalQueryPlan plan) {
+        return "中文查询: " + plan.standaloneZh()
+                + "\nEnglish query: " + plan.standaloneEn();
+    }
+
+    /** 诊断保留 String，输出语言选择策略及三种实际查询。 */
+    public static String diagnose(RetrievalQueryPlan plan) {
+        return "strategy=document-language\n"
+                + "ZH: " + plan.standaloneZh() + "\n"
+                + "EN: " + plan.standaloneEn() + "\n"
+                + "UNKNOWN: " + bilingual(plan);
+    }
+
+    /** 章节路径为空时只送 child 正文；否则只拼 header_path 最后一个 ` > ` 分段。 */
     private static TextSegment document(RetrievalCandidate candidate) {
         Object header = candidate.metadata().get(SegmentMetadataKeys.HEADER_PATH);
-        String path = header == null ? "" : header.toString().trim();
-        String body = path.isEmpty() ? candidate.text() : path + "\n" + candidate.text();
+        String last = lastHeader(header == null ? "" : header.toString());
+        String body = last.isEmpty() ? candidate.text() : last + "\n" + candidate.text();
         return TextSegment.from(body);
+    }
+
+    static String lastHeader(String path) {
+        if (path == null || path.isBlank()) {
+            return "";
+        }
+        String trimmed = path.trim();
+        int idx = trimmed.lastIndexOf(" > ");
+        return idx < 0 ? trimmed : trimmed.substring(idx + 3).trim();
     }
 
     private static long elapsedMs(long startedNanos) {

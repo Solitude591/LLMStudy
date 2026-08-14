@@ -15,8 +15,8 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -25,7 +25,7 @@ class RrfRerankAggregatorTest {
     @Test
     void groupsSameParentToHighestRrfChildBeforeBge() {
         CandidateReranker reranker = mock(CandidateReranker.class);
-        when(reranker.rerank(anyString(), anyList())).thenAnswer(invocation ->
+        when(reranker.rerank(any(), anyList())).thenAnswer(invocation ->
                 RerankResult.fallback("too-few-candidates", 0, invocation.getArgument(1)));
         RetrievalCandidate first = child("c1", "p1", 0.9);
         RetrievalCandidate second = child("c2", "p1", 0.8);
@@ -43,6 +43,7 @@ class RrfRerankAggregatorTest {
                 .map(RetrievalCandidate::id).toList());
         assertFalse(result.bgeUsed());
         assertEquals("too-few-candidates", result.bgeReason());
+        assertTrue(result.bgeQuery().contains("strategy=document-language"));
         assertTrue(result.bgeQuery().contains("中文查询: zh"));
     }
 
@@ -51,7 +52,7 @@ class RrfRerankAggregatorTest {
         CandidateReranker reranker = mock(CandidateReranker.class);
         RetrievalCandidate first = child("c1", "p1", 0.4).withRrfScore(0.4);
         RetrievalCandidate second = child("c2", "p2", 0.3).withRrfScore(0.3);
-        when(reranker.rerank(anyString(), anyList())).thenReturn(RerankResult.success(List.of(
+        when(reranker.rerank(any(), anyList())).thenReturn(RerankResult.success(List.of(
                 second.withBgeScore(0.9), first.withBgeScore(0.1)), 12));
         HybridRetriever.RetrievalResult retrieval = new HybridRetriever.RetrievalResult(
                 HybridRetriever.Lane.ok("zh_bm25", "zh", List.of(first, second), 1),

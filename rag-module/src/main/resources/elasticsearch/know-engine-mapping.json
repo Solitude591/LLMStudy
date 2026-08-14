@@ -7,7 +7,7 @@
   "mappings": {
     "dynamic": "strict",
     "_meta": {
-      "schema_version": 2,
+      "schema_version": 3,
       "description": "RAG document segment index"
     },
     "properties": {
@@ -66,6 +66,10 @@
             "type": "integer",
             "index": false,
             "doc_values": false
+          },
+          "language": {
+            "type": "keyword",
+            "ignore_above": 16
           }
         }
       }

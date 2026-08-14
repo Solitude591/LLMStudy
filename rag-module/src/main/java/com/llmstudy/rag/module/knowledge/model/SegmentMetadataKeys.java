@@ -15,6 +15,9 @@ public final class SegmentMetadataKeys {
     /** MySQL / ES：1-based 结束页码。 */
     public static final String PAGE_END = "page_end";
 
+    /** ES / 检索候选：由版本 language 注入，不写入 MySQL segment metadata。 */
+    public static final String LANGUAGE = "language";
+
     /** ES / 检索候选：由 segment 列或版本记录注入，不再写入 MySQL metadata。 */
     public static final String DOC_ID = "doc_id";
     public static final String VERSION_ID = "version_id";

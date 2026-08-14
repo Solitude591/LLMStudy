@@ -5,6 +5,7 @@ import com.llmstudy.rag.config.ElasticsearchProperties;
 import com.llmstudy.rag.config.MarkdownSplitterProperties;
 import com.llmstudy.rag.entity.KnowledgeDocumentVersion;
 import com.llmstudy.rag.entity.KnowledgeSegment;
+import com.llmstudy.rag.enums.DocumentLanguage;
 import com.llmstudy.rag.enums.DocumentStatus;
 import com.llmstudy.rag.enums.SegmentStatus;
 import com.llmstudy.rag.mapper.KnowledgeDocumentVersionMapper;
@@ -175,6 +176,8 @@ public class ElasticsearchSegmentIndexer implements SegmentEmbeddingService {
         SegmentMetadataMaps.copyString(source, metadata, SegmentMetadataKeys.HEADER_PATH);
         SegmentMetadataMaps.copyPositiveInt(source, metadata, SegmentMetadataKeys.PAGE_START);
         SegmentMetadataMaps.copyPositiveInt(source, metadata, SegmentMetadataKeys.PAGE_END);
+        metadata.put(SegmentMetadataKeys.LANGUAGE,
+                DocumentLanguage.fromValue(version.getLanguage()).value());
 
         // 新契约不再把 source_url 写入 MySQL；统一由版本 converted_doc_url 重建。
         if (version.getConvertedDocUrl() != null && !version.getConvertedDocUrl().isBlank()) {

@@ -3,6 +3,7 @@ package com.llmstudy.rag.module.rag.aggregation;
 import com.llmstudy.rag.config.RetrievalProperties;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
 import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
+import com.llmstudy.rag.module.rag.rerank.BgeCandidateReranker;
 import com.llmstudy.rag.module.rag.rerank.CandidateReranker;
 import com.llmstudy.rag.module.rag.rerank.RerankResult;
 import com.llmstudy.rag.module.rag.retrieval.HybridRetriever;
@@ -37,7 +38,7 @@ public class RrfRerankAggregator {
     /**
      * 对四路原始命中做排序，返回各阶段列表供在线注入和诊断复用。
      *
-     * @param plan   中英文独立查询，BGE 使用二者拼接
+     * @param plan   中英文独立查询，BGE 按候选文档语言选择其中一路
      * @param result 四路召回结果；失败路不会进入 RRF
      */
     public RankedEvidence aggregate(RetrievalQueryPlan plan,
@@ -46,11 +47,9 @@ public class RrfRerankAggregator {
                 result.successful(),
                 properties.getFusionCandidateCount(),
                 properties.getRrfK());
-        // 输入已按 RRF 排序，putIfAbsent 保证代表 child 是该组最高名次。
         List<RetrievalCandidate> grouped = group(rrf, properties.getRerankCandidateCount());
-        String bgeQuery = "中文查询: " + plan.standaloneZh()
-                + "\nEnglish query: " + plan.standaloneEn();
-        RerankResult reranked = reranker.rerank(bgeQuery, grouped);
+        String bgeQuery = BgeCandidateReranker.diagnose(plan);
+        RerankResult reranked = reranker.rerank(plan, grouped);
         List<RetrievalCandidate> afterBge = reranked.candidates();
         List<RetrievalCandidate> ranked;
         if (reranked.used()) {
@@ -123,7 +122,7 @@ public class RrfRerankAggregator {
      * @param bgeUsed      false 表示完整回退分组后的 RRF 顺序
      * @param bgeReason    回退原因；成功时为 null
      * @param bgeElapsedMs BGE 阶段耗时
-     * @param bgeQuery     实际送入 BGE 的双语查询文本
+     * @param bgeQuery     语言选择策略及三种实际 BGE 查询
      */
     public record RankedEvidence(List<RetrievalCandidate> rrf,
                                  List<RetrievalCandidate> grouped,

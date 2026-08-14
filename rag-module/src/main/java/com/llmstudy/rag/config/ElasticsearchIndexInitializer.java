@@ -26,7 +26,7 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
             LoggerFactory.getLogger(ElasticsearchIndexInitializer.class);
     private static final String MAPPING_RESOURCE =
             "elasticsearch/know-engine-mapping.json";
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 3;
 
     private final ElasticsearchClient client;
     private final ElasticsearchProperties properties;
@@ -80,7 +80,7 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
         }
     }
 
-    /** schema 1 → 2：为 strict metadata 追加页码字段并更新 schema_version。 */
+    /** schema 1/2 → 3：补齐页码与 language，并更新 schema_version。 */
     private void maybeUpgradeSchema(String indexName) throws Exception {
         IndexMappingRecord record = client.indices()
                 .getMapping(request -> request.index(indexName))
@@ -93,18 +93,25 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
         if (Objects.equals(actual, SCHEMA_VERSION)) {
             return;
         }
-        if (!Objects.equals(actual, 1)) {
+        if (!Objects.equals(actual, 1) && !Objects.equals(actual, 2)) {
             return;
         }
+        boolean addPages = Objects.equals(actual, 1);
         client.indices().putMapping(request -> request
                 .index(indexName)
-                .properties("metadata", metadata -> metadata.object(object -> object
-                        .properties("page_start", page -> page.integer(integer -> integer
-                                .index(false)
-                                .docValues(false)))
-                        .properties("page_end", page -> page.integer(integer -> integer
-                                .index(false)
-                                .docValues(false)))))
+                .properties("metadata", metadata -> metadata.object(object -> {
+                    object.properties("language", lang -> lang.keyword(keyword -> keyword
+                            .ignoreAbove(16)));
+                    if (addPages) {
+                        object.properties("page_start", page -> page.integer(integer -> integer
+                                        .index(false)
+                                        .docValues(false)))
+                                .properties("page_end", page -> page.integer(integer -> integer
+                                        .index(false)
+                                        .docValues(false)));
+                    }
+                    return object;
+                }))
                 .meta("schema_version", JsonData.of(SCHEMA_VERSION)));
         log.info("Elasticsearch 索引 schema 已升级: index={}, {} -> {}",
                 indexName, actual, SCHEMA_VERSION);
@@ -154,8 +161,9 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
         requireKeyword(indexName, metadataFields, "source_url");
         requireInteger(indexName, metadataFields, "page_start");
         requireInteger(indexName, metadataFields, "page_end");
-        require(indexName, metadataFields.size() == 7,
-                "metadata 只能包含约定的 7 个字段，实际为 " + metadataFields.keySet());
+        requireKeyword(indexName, metadataFields, "language");
+        require(indexName, metadataFields.size() == 8,
+                "metadata 只能包含约定的 8 个字段，实际为 " + metadataFields.keySet());
     }
 
     private static void requireKeyword(String indexName,

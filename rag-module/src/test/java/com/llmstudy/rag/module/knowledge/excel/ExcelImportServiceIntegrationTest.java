@@ -201,6 +201,12 @@ class ExcelImportServiceIntegrationTest {
                     SELECT COUNT(*) FROM information_schema.tables
                     WHERE table_schema = DATABASE() AND table_name = 'auth_user'
                     """, Integer.class));
+            assertEquals(1, testDatabase.queryForObject("""
+                    SELECT COUNT(*) FROM information_schema.columns
+                    WHERE table_schema = DATABASE()
+                      AND table_name = 'knowledge_document_version'
+                      AND column_name = 'language'
+                    """, Integer.class));
         } finally {
             if (!schemaName.matches("excel_schema_it_[a-f0-9]{12}")) {
                 throw new IllegalStateException("拒绝删除非测试数据库: " + schemaName);

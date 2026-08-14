@@ -120,6 +120,14 @@ public interface KnowledgeDocumentVersionMapper {
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(KnowledgeDocumentVersion version);
 
+    @Update("""
+            UPDATE knowledge_document_version
+            SET language = #{language}
+            WHERE version_id = #{versionId}
+            """)
+    int updateLanguage(@Param("versionId") String versionId,
+                       @Param("language") String language);
+
     /**
      * 原子抢占解析、分片或向量化阶段。
      */

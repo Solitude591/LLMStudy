@@ -3,6 +3,7 @@ package com.llmstudy.rag.module.rag.rerank;
 import com.llmstudy.rag.config.RerankerProperties;
 import com.llmstudy.rag.module.knowledge.model.SegmentMetadataKeys;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
+import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.output.Response;
 import org.junit.jupiter.api.Test;
@@ -16,7 +17,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -25,18 +25,16 @@ class BgeCandidateRerankerTest {
 
     @Test
     void sortsCandidatesByBgeScoreAndKeepsRrfScore() {
-        RerankerProperties properties = new RerankerProperties();
-        properties.setEnabled(true);
         BgeScoringModel model = mock(BgeScoringModel.class);
-        when(model.scoreAll(anyList(), eq("question")))
+        when(model.scorePairs(anyList(), anyList()))
                 .thenReturn(Response.from(List.of(0.1, 0.9)));
         RetrievalCandidate first = new RetrievalCandidate("a", "text-a", Map.of(), 1.0, null)
                 .withRrfScore(0.2);
         RetrievalCandidate second = new RetrievalCandidate("b", "text-b", Map.of(), 1.0, null)
                 .withRrfScore(0.1);
 
-        RerankResult result = new BgeCandidateReranker(properties, model)
-                .rerank("question", List.of(first, second));
+        RerankResult result = new BgeCandidateReranker(enabled(), model)
+                .rerank(plan("question"), List.of(first, second));
 
         assertTrue(result.used());
         assertNull(result.reason());
@@ -47,37 +45,41 @@ class BgeCandidateRerankerTest {
     }
 
     @Test
-    void sendsHeaderPathWithChildText() {
-        RerankerProperties properties = new RerankerProperties();
-        properties.setEnabled(true);
+    void usesLanguageSpecificQueriesAndLastHeaderOnly() {
         BgeScoringModel model = mock(BgeScoringModel.class);
-        when(model.scoreAll(anyList(), eq("query")))
-                .thenReturn(Response.from(List.of(0.5, 0.4)));
+        when(model.scorePairs(anyList(), anyList()))
+                .thenReturn(Response.from(List.of(0.9, 0.8, 0.7)));
+        RetrievalQueryPlan plan = new RetrievalQueryPlan("q", "中文问题", "English question");
         List<RetrievalCandidate> input = List.of(
-                new RetrievalCandidate("a", "child-a",
-                        Map.of(SegmentMetadataKeys.HEADER_PATH, "实验 > 表 3"), 1.0, null),
-                new RetrievalCandidate("b", "child-b", Map.of(), 1.0, null));
+                candidate("zh", "ZH", "论文 > 3.3 Comparison", "38.96M 0.94M"),
+                candidate("en", "EN", "Paper > Results", "params"),
+                candidate("unk", "UNKNOWN", "A > B > C", "mixed"));
 
-        new BgeCandidateReranker(properties, model).rerank("query", input);
+        new BgeCandidateReranker(enabled(), model).rerank(plan, input);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<TextSegment>> captor = ArgumentCaptor.forClass(List.class);
-        verify(model).scoreAll(captor.capture(), eq("query"));
-        assertEquals("实验 > 表 3\nchild-a", captor.getValue().getFirst().text());
-        assertEquals("child-b", captor.getValue().get(1).text());
+        ArgumentCaptor<List<String>> queryCaptor = ArgumentCaptor.forClass(List.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<TextSegment>> docCaptor = ArgumentCaptor.forClass(List.class);
+        verify(model).scorePairs(queryCaptor.capture(), docCaptor.capture());
+        assertEquals("中文问题", queryCaptor.getValue().get(0));
+        assertEquals("English question", queryCaptor.getValue().get(1));
+        assertTrue(queryCaptor.getValue().get(2).contains("中文查询:"));
+        assertTrue(queryCaptor.getValue().get(2).contains("English query:"));
+        assertEquals("3.3 Comparison\n38.96M 0.94M", docCaptor.getValue().get(0).text());
+        assertEquals("Results\nparams", docCaptor.getValue().get(1).text());
+        assertEquals("C\nmixed", docCaptor.getValue().get(2).text());
     }
 
     @Test
     void inferenceFailureKeepsOriginalOrderWithReason() {
-        RerankerProperties properties = new RerankerProperties();
-        properties.setEnabled(true);
         BgeScoringModel model = mock(BgeScoringModel.class);
-        when(model.scoreAll(anyList(), eq("question")))
+        when(model.scorePairs(anyList(), anyList()))
                 .thenThrow(new IllegalStateException("model unavailable"));
         List<RetrievalCandidate> input = List.of(candidate("a"), candidate("b"));
 
-        RerankResult result = new BgeCandidateReranker(properties, model)
-                .rerank("question", input);
+        RerankResult result = new BgeCandidateReranker(enabled(), model)
+                .rerank(plan("question"), input);
         assertFalse(result.used());
         assertEquals("inference-error", result.reason());
         assertEquals(input, result.candidates());
@@ -86,15 +88,13 @@ class BgeCandidateRerankerTest {
 
     @Test
     void invalidScoresKeepOriginalOrderWithReason() {
-        RerankerProperties properties = new RerankerProperties();
-        properties.setEnabled(true);
         BgeScoringModel model = mock(BgeScoringModel.class);
-        when(model.scoreAll(anyList(), eq("question")))
+        when(model.scorePairs(anyList(), anyList()))
                 .thenReturn(Response.from(List.of(Double.NaN, 0.9)));
         List<RetrievalCandidate> input = List.of(candidate("a"), candidate("b"));
 
-        RerankResult result = new BgeCandidateReranker(properties, model)
-                .rerank("question", input);
+        RerankResult result = new BgeCandidateReranker(enabled(), model)
+                .rerank(plan("question"), input);
         assertEquals("invalid-score", result.reason());
         assertEquals(input, result.candidates());
     }
@@ -106,12 +106,29 @@ class BgeCandidateRerankerTest {
         List<RetrievalCandidate> input = List.of(candidate("a"), candidate("b"));
 
         RerankResult result = new BgeCandidateReranker(properties, mock(BgeScoringModel.class))
-                .rerank("question", input);
+                .rerank(plan("question"), input);
         assertEquals("disabled", result.reason());
         assertFalse(result.used());
     }
 
+    private static RerankerProperties enabled() {
+        RerankerProperties properties = new RerankerProperties();
+        properties.setEnabled(true);
+        return properties;
+    }
+
+    private static RetrievalQueryPlan plan(String query) {
+        return new RetrievalQueryPlan(query, query, query);
+    }
+
     private static RetrievalCandidate candidate(String id) {
         return new RetrievalCandidate(id, "text-" + id, Map.of(), 1.0, null);
+    }
+
+    private static RetrievalCandidate candidate(String id, String language,
+                                                String headerPath, String text) {
+        return new RetrievalCandidate(id, text, Map.of(
+                SegmentMetadataKeys.LANGUAGE, language,
+                SegmentMetadataKeys.HEADER_PATH, headerPath), 1.0, null);
     }
 }

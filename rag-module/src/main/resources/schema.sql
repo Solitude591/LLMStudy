@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_document_version`
     `raw_object_key`     VARCHAR(512) NOT NULL DEFAULT '' COMMENT '原始文件的 MinIO object key',
     `converted_doc_url`  VARCHAR(512) NOT NULL DEFAULT '' COMMENT '解析后的 Markdown 文件地址',
     `content_list_url`   VARCHAR(512)          DEFAULT NULL COMMENT 'MinerU content_list.json 地址，可空',
+    `language`           VARCHAR(16)  NOT NULL DEFAULT 'UNKNOWN' COMMENT '文档语言：ZH, EN, UNKNOWN',
     `processing_status`  VARCHAR(32)  NOT NULL DEFAULT 'INIT' COMMENT '处理状态：INIT, UPLOADED, CONVERTING, CONVERTED, SPLITTING, CHUNKED, VECTORING, VECTOR_STORED',
     `release_status`     VARCHAR(32)  NOT NULL DEFAULT 'PREPARING' COMMENT '发布状态：PREPARING, READY, PUBLISHING, PUBLISHED, ARCHIVED',
     `error_message`      TEXT                  DEFAULT NULL COMMENT '处理失败原因',
@@ -417,3 +418,20 @@ SET @content_list_url_column_sql = IF(
 PREPARE content_list_url_column_stmt FROM @content_list_url_column_sql;
 EXECUTE content_list_url_column_stmt;
 DEALLOCATE PREPARE content_list_url_column_stmt;
+
+-- 兼容已存在的 knowledge_document_version：补充版本级语言。
+SET @version_language_column_exists = (
+    SELECT COUNT(*)
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'knowledge_document_version'
+      AND COLUMN_NAME = 'language'
+);
+SET @version_language_column_sql = IF(
+    @version_language_column_exists = 0,
+    'ALTER TABLE `knowledge_document_version` ADD COLUMN `language` VARCHAR(16) NOT NULL DEFAULT ''UNKNOWN'' COMMENT ''文档语言：ZH, EN, UNKNOWN'' AFTER `content_list_url`',
+    'SELECT 1'
+);
+PREPARE version_language_column_stmt FROM @version_language_column_sql;
+EXECUTE version_language_column_stmt;
+DEALLOCATE PREPARE version_language_column_stmt;

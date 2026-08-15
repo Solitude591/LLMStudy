@@ -11,14 +11,16 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
@@ -27,60 +29,46 @@ import static org.mockito.Mockito.when;
 
 class HybridRetrieverTest {
 
+    private static final RetrievalQueryPlan PLAN =
+            new RetrievalQueryPlan("q", "zh", "en");
+
     @Test
-    void singleLaneFailureContinuesOtherLanes() throws Exception {
+    void singleLaneFailureContinuesOtherLane() throws Exception {
         Bm25Retriever bm25 = mock(Bm25Retriever.class);
         KnnRetriever knn = mock(KnnRetriever.class);
-        when(bm25.retrieve(eq("zh"), isNull(), anyInt())).thenThrow(new IOException("down"));
-        when(bm25.retrieve(eq("en"), isNull(), anyInt())).thenReturn(List.of(candidate("en-bm25")));
-        when(knn.embedAll(List.of("zh", "en")))
-                .thenReturn(List.of(new float[]{0.1f}, new float[]{0.2f}));
-        when(knn.search(any(), isNull(), anyInt()))
-                .thenReturn(List.of(candidate("zh-knn")))
-                .thenReturn(List.of());
+        when(bm25.retrieve(eq(PLAN), isNull(), anyInt()))
+                .thenThrow(new IOException("down"));
+        when(knn.retrieve(eq(PLAN), isNull(), anyInt()))
+                .thenReturn(List.of(candidate("knn")));
 
-        HybridRetriever.RetrievalResult result = retriever(bm25, knn)
-                .retrieve(new RetrievalQueryPlan("q", "zh", "en"));
+        HybridRetriever.RetrievalResult result = retriever(bm25, knn).retrieve(PLAN);
 
-        assertTrue(result.zhBm25().failed());
-        assertFalse(result.bm25Degraded());
-        assertEquals(List.of("en-bm25"), result.enBm25().hits().stream()
+        assertEquals(List.of("bm25", "knn"), result.lanes().stream()
+                .map(HybridRetriever.Lane::channel).toList());
+        assertTrue(result.bm25().failed());
+        assertFalse(result.knn().failed());
+        assertFalse(result.knnDegraded());
+        assertEquals(List.of("knn"), result.knn().hits().stream()
                 .map(RetrievalCandidate::id).toList());
-        assertEquals(3, result.successful().size());
+        assertEquals(1, result.successful().size());
     }
 
     @Test
-    void allLanesFailRaiseRetrievalFailure() throws Exception {
+    void bothLanesFailRaiseRetrievalFailure() throws Exception {
         Bm25Retriever bm25 = mock(Bm25Retriever.class);
         KnnRetriever knn = mock(KnnRetriever.class);
-        when(bm25.retrieve(eq("zh"), isNull(), anyInt())).thenThrow(new IOException("bm25"));
-        when(bm25.retrieve(eq("en"), isNull(), anyInt())).thenThrow(new IOException("bm25-en"));
-        when(knn.embedAll(anyList())).thenThrow(new IllegalStateException("embed"));
+        when(bm25.retrieve(eq(PLAN), isNull(), anyInt()))
+                .thenThrow(new IOException("bm25"));
+        when(knn.retrieve(eq(PLAN), isNull(), anyInt()))
+                .thenThrow(new IOException("knn"));
 
-        assertThrows(IllegalStateException.class, () -> retriever(bm25, knn)
-                .retrieve(new RetrievalQueryPlan("q", "zh", "en")));
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> retriever(bm25, knn).retrieve(PLAN));
+        assertEquals(2, failure.getSuppressed().length);
     }
 
     @Test
-    void duplicateLanguageSkipsEnglishLanesAndEmbedsOnce() throws Exception {
-        Bm25Retriever bm25 = mock(Bm25Retriever.class);
-        KnnRetriever knn = mock(KnnRetriever.class);
-        when(bm25.retrieve(eq("same"), isNull(), anyInt())).thenReturn(List.of(candidate("b")));
-        when(knn.embedAll(List.of("same"))).thenReturn(List.of(new float[]{0.3f}));
-        when(knn.search(any(), isNull(), anyInt()))
-                .thenReturn(List.of(candidate("k")));
-
-        HybridRetriever.RetrievalResult result = retriever(bm25, knn)
-                .retrieve(new RetrievalQueryPlan("same", "same", "same"));
-
-        assertTrue(result.enBm25().skipped());
-        assertTrue(result.enKnn().skipped());
-        assertEquals(2, result.successful().size());
-        verify(knn).embedAll(List.of("same"));
-    }
-
-    @Test
-    void authenticatedAccessContextFiltersAllLanesWithSameVersionSnapshot()
+    void authenticatedAccessContextFiltersBothLanesWithSameVersionSnapshot()
             throws Exception {
         Bm25Retriever bm25 = mock(Bm25Retriever.class);
         KnnRetriever knn = mock(KnnRetriever.class);
@@ -89,18 +77,37 @@ class HybridRetrieverTest {
         List<String> versions = List.of("v-private", "v-org", "v-public");
         when(documents.findAccessibleCurrentVersionIds("alice", "org-a", false))
                 .thenReturn(versions);
-        when(bm25.retrieve(eq("zh"), eq(versions), anyInt())).thenReturn(List.of());
-        when(bm25.retrieve(eq("en"), eq(versions), anyInt())).thenReturn(List.of());
-        when(knn.embedAll(List.of("zh", "en")))
-                .thenReturn(List.of(new float[]{0.1f}, new float[]{0.2f}));
-        when(knn.search(any(), eq(versions), anyInt())).thenReturn(List.of());
+        when(bm25.retrieve(PLAN, versions, 10)).thenReturn(List.of());
+        when(knn.retrieve(PLAN, versions, 10)).thenReturn(List.of());
 
-        new HybridRetriever(bm25, knn, documents, new RetrievalProperties())
-                .retrieve(new RetrievalQueryPlan("q", "zh", "en"), actor);
+        new HybridRetriever(bm25, knn, documents, new RetrievalProperties(), Runnable::run)
+                .retrieve(PLAN, actor);
 
-        verify(bm25).retrieve("zh", versions, 10);
-        verify(bm25).retrieve("en", versions, 10);
-        verify(knn).embedAll(List.of("zh", "en"));
+        verify(bm25).retrieve(PLAN, versions, 10);
+        verify(knn).retrieve(PLAN, versions, 10);
+    }
+
+    @Test
+    void bm25AndKnnRunConcurrently() throws Exception {
+        Bm25Retriever bm25 = mock(Bm25Retriever.class);
+        KnnRetriever knn = mock(KnnRetriever.class);
+        CountDownLatch bothStarted = new CountDownLatch(2);
+        when(bm25.retrieve(eq(PLAN), isNull(), anyInt())).thenAnswer(invocation -> {
+            bothStarted.countDown();
+            assertTrue(bothStarted.await(2, TimeUnit.SECONDS));
+            return List.of(candidate("b"));
+        });
+        when(knn.retrieve(eq(PLAN), isNull(), anyInt())).thenAnswer(invocation -> {
+            bothStarted.countDown();
+            assertTrue(bothStarted.await(2, TimeUnit.SECONDS));
+            return List.of(candidate("k"));
+        });
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            HybridRetriever.RetrievalResult result = new HybridRetriever(
+                    bm25, knn, null, new RetrievalProperties(), executor).retrieve(PLAN);
+            assertEquals(2, result.successful().size());
+        }
     }
 
     private static HybridRetriever retriever(Bm25Retriever bm25, KnnRetriever knn) {

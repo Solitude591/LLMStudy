@@ -18,7 +18,7 @@ import java.util.Map;
 public class RrfFusion {
 
     /**
-     * 按四路（或更少成功路）名次融合。
+     * 按两路（或更少成功路）名次融合。
      *
      * @param lanes 每路已按该路原始分排序的命中
      * @param limit 融合后最多保留条数

@@ -31,10 +31,8 @@ class RrfRerankAggregatorTest {
         RetrievalCandidate second = child("c2", "p1", 0.8);
         RetrievalCandidate other = child("c3", "p2", 0.7);
         HybridRetriever.RetrievalResult retrieval = new HybridRetriever.RetrievalResult(
-                HybridRetriever.Lane.ok("zh_bm25", "zh", List.of(first, second, other), 1),
-                HybridRetriever.Lane.skipped("en_bm25", "en"),
-                HybridRetriever.Lane.ok("zh_knn", "zh", List.of(), 1),
-                HybridRetriever.Lane.skipped("en_knn", "en"));
+                HybridRetriever.Lane.ok("bm25", "query", List.of(first, second, other), 1),
+                HybridRetriever.Lane.ok("knn", "query", List.of(), 1));
 
         RrfRerankAggregator.RankedEvidence result = aggregator(reranker).aggregate(
                 new RetrievalQueryPlan("q", "zh", "en"), retrieval);
@@ -55,10 +53,8 @@ class RrfRerankAggregatorTest {
         when(reranker.rerank(any(), anyList())).thenReturn(RerankResult.success(List.of(
                 second.withBgeScore(0.9), first.withBgeScore(0.1)), 12));
         HybridRetriever.RetrievalResult retrieval = new HybridRetriever.RetrievalResult(
-                HybridRetriever.Lane.ok("zh_bm25", "zh", List.of(first, second), 1),
-                HybridRetriever.Lane.skipped("en_bm25", "en"),
-                HybridRetriever.Lane.ok("zh_knn", "zh", List.of(), 1),
-                HybridRetriever.Lane.skipped("en_knn", "en"));
+                HybridRetriever.Lane.ok("bm25", "query", List.of(first, second), 1),
+                HybridRetriever.Lane.ok("knn", "query", List.of(), 1));
 
         RrfRerankAggregator.RankedEvidence result = aggregator(reranker).aggregate(
                 new RetrievalQueryPlan("q", "zh", "en"), retrieval);

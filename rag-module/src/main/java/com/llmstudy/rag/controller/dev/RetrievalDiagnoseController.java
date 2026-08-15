@@ -26,7 +26,7 @@ public class RetrievalDiagnoseController {
     }
 
     /**
-     * 执行改写、四路召回和排序，不调用回答模型。
+     * 执行改写、两路并行召回和排序，不调用回答模型。
      *
      * <p>{@code accessContext} 为空，与 {@code /dataset/generate} 一样检索全部已发布版本。</p>
      */

@@ -709,6 +709,13 @@ select:focus-visible {
     border-top: 1px solid var(--line);
 }
 
+.message-content mjx-container[display="true"] {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.2em 0;
+}
+
 .message-content.is-streaming::after {
     content: "";
     width: 6px;

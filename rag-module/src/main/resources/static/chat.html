@@ -181,9 +181,23 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-<!-- 本地 Markdown 解析与 HTML 清洗；defer 脚本按声明顺序执行，必须位于 chat.js 之前。 -->
+<!-- 本地 Markdown、HTML 清洗与公式渲染；defer 脚本按声明顺序执行。 -->
 <script src="vendor/marked.min.js" defer></script>
 <script src="vendor/purify.min.js" defer></script>
+<script>
+    window.MathJax = {
+        tex: {
+            inlineMath: [["$", "$"], ["\\(", "\\)"]],
+            displayMath: [["$$", "$$"], ["\\[", "\\]"]],
+            processEscapes: true
+        },
+        options: {
+            skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"]
+        },
+        startup: { typeset: false }
+    };
+</script>
+<script src="webjars/mathjax/3.2.2/es5/tex-chtml.js" defer></script>
 <script src="js/auth.js" defer></script>
 <script src="js/chat.js" defer></script>
 </body>

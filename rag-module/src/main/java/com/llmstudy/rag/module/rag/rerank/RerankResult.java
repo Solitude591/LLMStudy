@@ -26,7 +26,8 @@ public record RerankResult(boolean used, String reason, long elapsedMs,
      * 回退 RRF 顺序。
      *
      * @param reason 稳定短码，如 {@code disabled}、{@code too-few-candidates}、
-     *               {@code score-count-mismatch}、{@code invalid-score}、{@code inference-error}
+     *               {@code score-count-mismatch}、{@code invalid-score}、
+     *               {@code invalid-min-score}、{@code inference-error}
      */
     public static RerankResult fallback(String reason, long elapsedMs,
                                         List<RetrievalCandidate> candidates) {

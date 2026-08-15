@@ -27,7 +27,7 @@ class BgeCandidateRerankerTest {
     void sortsCandidatesByBgeScoreAndKeepsRrfScore() {
         BgeScoringModel model = mock(BgeScoringModel.class);
         when(model.scorePairs(anyList(), anyList()))
-                .thenReturn(Response.from(List.of(0.1, 0.9)));
+                .thenReturn(Response.from(List.of(0.8, 0.9)));
         RetrievalCandidate first = new RetrievalCandidate("a", "text-a", Map.of(), 1.0, null)
                 .withRrfScore(0.2);
         RetrievalCandidate second = new RetrievalCandidate("b", "text-b", Map.of(), 1.0, null)
@@ -42,6 +42,35 @@ class BgeCandidateRerankerTest {
                 .map(RetrievalCandidate::id).toList());
         assertEquals(0.9, result.candidates().getFirst().bgeScore());
         assertEquals(0.1, result.candidates().getFirst().rrfScore());
+    }
+
+    @Test
+    void filtersScoresBelowConfiguredMinimumAndKeepsBoundary() {
+        BgeScoringModel model = mock(BgeScoringModel.class);
+        when(model.scorePairs(anyList(), anyList()))
+                .thenReturn(Response.from(List.of(0.59, 0.6, 0.91)));
+
+        RerankResult result = new BgeCandidateReranker(enabled(), model)
+                .rerank(plan("question"), List.of(
+                        candidate("low"), candidate("boundary"), candidate("high")));
+
+        assertTrue(result.used());
+        assertEquals(List.of("high", "boundary"), result.candidates().stream()
+                .map(RetrievalCandidate::id).toList());
+    }
+
+    @Test
+    void allCandidatesBelowMinimumReturnsSuccessfulEmptyResult() {
+        BgeScoringModel model = mock(BgeScoringModel.class);
+        when(model.scorePairs(anyList(), anyList()))
+                .thenReturn(Response.from(List.of(0.1)));
+
+        RerankResult result = new BgeCandidateReranker(enabled(), model)
+                .rerank(plan("question"), List.of(candidate("noise")));
+
+        assertTrue(result.used());
+        assertTrue(result.candidates().isEmpty());
+        assertNull(result.reason());
     }
 
     @Test

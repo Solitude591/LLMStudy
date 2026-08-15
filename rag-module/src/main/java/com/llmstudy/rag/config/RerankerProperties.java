@@ -29,6 +29,9 @@ public class RerankerProperties {
     /** 推理批次大小，批内按最长序列动态 padding。 */
     private int batchSize = 4;
 
+    /** 低于该 sigmoid 分数的候选不进入 LLM 上下文。 */
+    private double minScore = 0.6;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -67,5 +70,13 @@ public class RerankerProperties {
 
     public void setBatchSize(int batchSize) {
         this.batchSize = batchSize;
+    }
+
+    public double getMinScore() {
+        return minScore;
+    }
+
+    public void setMinScore(double minScore) {
+        this.minScore = minScore;
     }
 }

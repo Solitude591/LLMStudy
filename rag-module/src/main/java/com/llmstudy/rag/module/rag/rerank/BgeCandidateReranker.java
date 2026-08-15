@@ -18,7 +18,8 @@ import java.util.stream.IntStream;
  * 可选 BGE 重排适配器。
  *
  * <p>禁用、候选不足、评分异常或执行失败时返回 {@link RerankResult#fallback}，
- * 候选保持输入顺序且不写 {@code bgeScore}。成功时按 BGE 分排序并写入 bgeScore。</p>
+ * 候选保持输入顺序且不写 {@code bgeScore}。成功时先过滤低于
+ * {@link RerankerProperties#getMinScore()} 的噪声，再按 BGE 分排序并写入 bgeScore。</p>
  */
 @Component
 public class BgeCandidateReranker implements CandidateReranker {
@@ -46,7 +47,7 @@ public class BgeCandidateReranker implements CandidateReranker {
         if (!properties.isEnabled()) {
             return RerankResult.fallback("disabled", elapsedMs(started), safe);
         }
-        if (safe.size() <= 1) {
+        if (safe.isEmpty()) {
             return RerankResult.fallback("too-few-candidates", elapsedMs(started), safe);
         }
         if (plan == null) {
@@ -68,7 +69,13 @@ public class BgeCandidateReranker implements CandidateReranker {
                 log.warn("BGE 评分包含非法值，保持 RRF 排序");
                 return RerankResult.fallback("invalid-score", elapsedMs(started), safe);
             }
+            double minScore = properties.getMinScore();
+            if (!Double.isFinite(minScore) || minScore < 0.0 || minScore > 1.0) {
+                log.warn("BGE minScore 非法，保持 RRF 排序: {}", minScore);
+                return RerankResult.fallback("invalid-min-score", elapsedMs(started), safe);
+            }
             List<RetrievalCandidate> ranked = IntStream.range(0, safe.size()).boxed()
+                    .filter(index -> scores.get(index) >= minScore)
                     .sorted(Comparator.comparingDouble(
                             (Integer index) -> scores.get(index)).reversed())
                     .map(index -> safe.get(index).withBgeScore(scores.get(index)))

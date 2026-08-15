@@ -140,12 +140,14 @@ rag:
     # pair 分词最大长度与推理批次大小
     max-length: ${BGE_RERANKER_MAX_LENGTH:512}
     batch-size: ${BGE_RERANKER_BATCH_SIZE:4}
+    # 低于该 sigmoid 分数的候选不注入 LLM 上下文
+    min-score: ${BGE_RERANKER_MIN_SCORE:0.6}
 
   retrieval:
     per-query-top-k: 10
     fusion-candidate-count: 40
     rerank-candidate-count: 20
-    top-n: 8
+    top-n: 5
     rrf-k: 60
     bge-rank-weight: 0.85
     retrieval-rerank-weight: 0.15

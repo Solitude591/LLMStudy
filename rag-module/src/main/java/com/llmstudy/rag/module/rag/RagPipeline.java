@@ -35,7 +35,7 @@ import java.util.function.Consumer;
 /**
  * 在线 RAG 唯一编排入口。
  *
- * <p>固定按「查询改写 → 四路召回 → RRF → parent 分组 → BGE → 名次融合
+ * <p>固定按「查询改写 → 两路并行召回 → RRF → parent 分组 → BGE → 名次融合
  * → parent 展开补位 → Top-N → Prompt 注入」执行。诊断接口复用同一条
  * {@link #run}，只是停在证据选择、不调用回答模型。</p>
  */

@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 四路 RRF → parent 分组 → BGE → 名次融合。
+ * 两路 RRF → parent 分组 → BGE → 名次融合。
  *
  * <p>此阶段不展开完整 parent，避免长章节截断真正命中的 child 内容。
  * 最终 Top-N 和 parent 展开由 Pipeline 在本类返回的排序列表上补位完成。</p>
@@ -36,10 +36,10 @@ public class RrfRerankAggregator {
     }
 
     /**
-     * 对四路原始命中做排序，返回各阶段列表供在线注入和诊断复用。
+     * 对两路原始命中做排序，返回各阶段列表供在线注入和诊断复用。
      *
      * @param plan   中英文独立查询，BGE 按候选文档语言选择其中一路
-     * @param result 四路召回结果；失败路不会进入 RRF
+     * @param result 两路召回结果；失败路不会进入 RRF
      */
     public RankedEvidence aggregate(RetrievalQueryPlan plan,
                                     HybridRetriever.RetrievalResult result) {
@@ -115,7 +115,7 @@ public class RrfRerankAggregator {
     /**
      * 排序各阶段快照。
      *
-     * @param rrf          四路 RRF 后的 chunk 列表
+     * @param rrf          两路 RRF 后的 chunk 列表
      * @param grouped      parent 分组后的代表 child
      * @param afterBge     BGE 打分后的列表；失败时与 grouped 同序且无 bgeScore
      * @param ranked       最终名次融合后的列表，供 Pipeline 按序展开

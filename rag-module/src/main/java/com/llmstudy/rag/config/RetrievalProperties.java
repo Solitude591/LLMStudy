@@ -3,7 +3,7 @@ package com.llmstudy.rag.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * 四路召回与排序阈值。
+ * 两路召回与排序阈值。
  *
  * <p>只提供参数，不提供新旧检索链路开关。top-n 从 {@code rag.reranker} 迁到此处，
  * 避免排序截断和 BGE 模型路径混在同一前缀下。</p>
@@ -14,14 +14,14 @@ public class RetrievalProperties {
     /** 每一路 BM25/KNN 的召回条数。 */
     private int perQueryTopK = 10;
 
-    /** 四路 RRF 融合后进入 parent 分组的上限。 */
+    /** 两路 RRF 融合后进入 parent 分组的上限。 */
     private int fusionCandidateCount = 40;
 
     /** parent 分组后进入 BGE 的代表 child 上限。 */
     private int rerankCandidateCount = 20;
 
     /** 展开 parent 并补位后的最终证据条数。 */
-    private int topN = 8;
+    private int topN = 5;
 
     /** RRF 与最终名次融合共用的 k。 */
     private int rrfK = 60;

@@ -1,20 +1,23 @@
 package com.llmstudy.rag.module.rag.retrieval;
 
-import com.llmstudy.rag.module.knowledge.model.SegmentMetadataKeys;
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.FieldValue;
+import co.elastic.clients.elasticsearch._types.KnnSearch;
+import co.elastic.clients.elasticsearch._types.query_dsl.Query;
+import co.elastic.clients.elasticsearch.core.SearchResponse;
+import co.elastic.clients.elasticsearch.core.search.Hit;
+import com.llmstudy.rag.config.ElasticsearchProperties;
+import com.llmstudy.rag.enums.DocumentLanguage;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
-import dev.langchain4j.data.embedding.Embedding;
-import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.store.embedding.EmbeddingMatch;
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
-import dev.langchain4j.store.embedding.filter.MetadataFilterBuilder;
-import dev.langchain4j.store.embedding.elasticsearch.ElasticsearchEmbeddingStore;
+import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
+import dev.langchain4j.store.embedding.elasticsearch.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -22,7 +25,7 @@ import java.util.Map;
  * 向量近邻检索适配器。
  *
  * <p>只返回 child/standalone 命中；parent 展开统一延迟到融合重排之后。
- * 中英文查询由上层一次 {@link #embedAll(List)} 后再分别 {@link #search}。</p>
+ * 中英文查询一次批量 embedding，并合并进单次 ES KNN 请求。</p>
  */
 @Component
 public class KnnRetriever {
@@ -30,12 +33,15 @@ public class KnnRetriever {
     private static final Logger log = LoggerFactory.getLogger(KnnRetriever.class);
 
     private final OpenAiEmbeddingModel embeddingModel;
-    private final ElasticsearchEmbeddingStore embeddingStore;
+    private final ElasticsearchClient client;
+    private final ElasticsearchProperties properties;
 
     public KnnRetriever(OpenAiEmbeddingModel embeddingModel,
-                        ElasticsearchEmbeddingStore embeddingStore) {
+                        ElasticsearchClient client,
+                        ElasticsearchProperties properties) {
         this.embeddingModel = embeddingModel;
-        this.embeddingStore = embeddingStore;
+        this.client = client;
+        this.properties = properties;
     }
 
     /**
@@ -75,34 +81,95 @@ public class KnnRetriever {
         if (currentVersionIds != null && currentVersionIds.isEmpty()) {
             return List.of();
         }
-        EmbeddingSearchRequest.EmbeddingSearchRequestBuilder request =
-                EmbeddingSearchRequest.builder()
-                        .queryEmbedding(Embedding.from(vector))
-                        .maxResults(Math.max(1, topK))
-                        .minScore(0.0);
-        if (currentVersionIds != null) {
-            request.filter(MetadataFilterBuilder
-                    .metadataKey(SegmentMetadataKeys.VERSION_ID)
-                    .isIn(currentVersionIds));
+        try {
+            return search(List.of(knn(vector, currentVersionIds, null, 1.0f, topK)), topK);
+        } catch (IOException e) {
+            throw new IllegalStateException("KNN Elasticsearch 检索失败", e);
         }
-        List<EmbeddingMatch<TextSegment>> matches =
-                embeddingStore.search(request.build()).matches();
+    }
+
+    /**
+     * 一次批量 embedding，随后用单次 ES Search API 完成语言感知 KNN。
+     */
+    public List<RetrievalCandidate> retrieve(RetrievalQueryPlan plan,
+                                             List<String> currentVersionIds,
+                                             int topK) throws IOException {
+        if (currentVersionIds != null && currentVersionIds.isEmpty()) {
+            return List.of();
+        }
+        List<float[]> vectors = embedAll(plan.uniqueQueries());
+        if (plan.duplicateLanguage()) {
+            return search(List.of(knn(vectors.getFirst(), currentVersionIds,
+                    null, 1.0f, topK)), topK);
+        }
+        List<KnnSearch> searches = List.of(
+                knn(vectors.get(0), currentVersionIds, DocumentLanguage.ZH, 1.0f, topK),
+                knn(vectors.get(1), currentVersionIds, DocumentLanguage.EN, 1.0f, topK),
+                knn(vectors.get(0), currentVersionIds,
+                        DocumentLanguage.UNKNOWN, 0.5f, topK),
+                knn(vectors.get(1), currentVersionIds,
+                        DocumentLanguage.UNKNOWN, 0.5f, topK));
+        return search(searches, topK);
+    }
+
+    private List<RetrievalCandidate> search(List<KnnSearch> searches, int topK)
+            throws IOException {
+        SearchResponse<Document> response = client.search(request -> request
+                        .index(properties.getIndexName())
+                        .knn(searches)
+                        .size(Math.max(1, topK)),
+                Document.class);
         List<RetrievalCandidate> candidates = new ArrayList<>();
-        for (EmbeddingMatch<TextSegment> match : matches) {
-            TextSegment segment = match.embedded();
-            if (match.embeddingId() == null || match.embeddingId().isBlank()
-                    || segment == null || segment.text() == null || segment.text().isBlank()) {
-                log.warn("KNN 命中缺少 embeddingId 或文本，已跳过");
+        for (Hit<Document> hit : response.hits().hits()) {
+            Document source = hit.source();
+            if (hit.id() == null || hit.id().isBlank() || source == null
+                    || source.getText() == null || source.getText().isBlank()) {
+                log.warn("KNN 命中缺少 _id、_source 或文本，已跳过: {}", hit.id());
                 continue;
             }
-            Map<String, Object> metadata = new LinkedHashMap<>(segment.metadata().toMap());
             candidates.add(new RetrievalCandidate(
-                    match.embeddingId(),
-                    segment.text(),
-                    metadata,
-                    match.score() == null ? 0.0 : match.score(),
+                    hit.id(),
+                    source.getText(),
+                    source.getMetadata() == null ? Map.of() : source.getMetadata(),
+                    hit.score() == null ? 0.0 : hit.score(),
                     null));
         }
         return candidates;
+    }
+
+    private static KnnSearch knn(float[] vector,
+                                 List<String> currentVersionIds,
+                                 DocumentLanguage language,
+                                 float boost,
+                                 int topK) {
+        List<Query> filters = new ArrayList<>();
+        if (currentVersionIds != null) {
+            filters.add(terms("metadata.version_id.keyword", currentVersionIds));
+        }
+        if (language != null) {
+            filters.add(terms("metadata.language", List.of(language.value())));
+        }
+        int k = Math.max(1, topK);
+        return KnnSearch.of(search -> search
+                .field("vector")
+                .queryVector(toList(vector))
+                .k(k)
+                .numCandidates(Math.max(100, k * 10))
+                .boost(boost)
+                .filter(filters));
+    }
+
+    private static Query terms(String field, List<String> values) {
+        return Query.of(query -> query.terms(terms -> terms
+                .field(field)
+                .terms(value -> value.value(values.stream().map(FieldValue::of).toList()))));
+    }
+
+    private static List<Float> toList(float[] vector) {
+        List<Float> values = new ArrayList<>(vector.length);
+        for (float value : vector) {
+            values.add(value);
+        }
+        return values;
     }
 }

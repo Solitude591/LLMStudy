@@ -10,7 +10,7 @@ import java.util.Map;
  * 与 LangChain4j/Spring AI 解耦的检索候选。
  *
  * <p>raw / RRF / BGE / final 使用独立字段，禁止用一个 {@code score} 串改语义。
- * 四路名次不挂在候选上：诊断接口按各阶段列表下标还原 rank。</p>
+ * 各召回路名次不挂在候选上：诊断接口按各阶段列表下标还原 rank。</p>
  */
 public record RetrievalCandidate(
         String id, String text, Map<String, Object> metadata,

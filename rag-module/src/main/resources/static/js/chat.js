@@ -28,6 +28,94 @@
     } else {
         console.warn("Markdown 渲染依赖未加载，assistant 消息将按纯文本显示");
     }
+    // tex-chtml.js 在微任务中异步挂载 typesetPromise，不能在脚本加载时判定可用性；
+    // 渲染前通过 MathJax.startup.promise 等待启动完成，启动失败的页面只警告一次。
+    const mathRenderRevision = new WeakMap();
+    let mathRenderQueue = Promise.resolve();
+    let mathReadyPromise = null;
+    let mathMissingWarned = false;
+
+    function whenMathReady() {
+        if (typeof window.MathJax?.typesetPromise === "function") {
+            return Promise.resolve(true);
+        }
+        if (!mathReadyPromise) {
+            mathReadyPromise = Promise.resolve(window.MathJax?.startup?.promise)
+                .then(() => typeof window.MathJax?.typesetPromise === "function")
+                .catch(() => false);
+        }
+        return mathReadyPromise;
+    }
+
+    const MATH_TOKEN_PATTERN = /RAGMATHPLACEHOLDER(\d+)END/g;
+
+    /**
+     * 先用纯文本 token 保护完整公式，防止 marked 吞掉 \(...\) 定界符、
+     * 双反斜杠换行或 aligned 环境的 &。代码块与行内代码保持原样。
+     */
+    function protectMathExpressions(markdown) {
+        const expressions = [];
+        const protectedMarkdown = markdown.replace(
+            /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([^\n]*?\\\)|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+(?<!\\)\$(?!\$))/g,
+            (match, code, math) => {
+                if (code) return code;
+                let normalized = math;
+                if (math.startsWith("\\[")) {
+                    normalized = `$$${math.slice(2, -2)}$$`;
+                } else if (math.startsWith("\\(")) {
+                    normalized = `$${math.slice(2, -2)}$`;
+                }
+                const index = expressions.push(normalized) - 1;
+                return `RAGMATHPLACEHOLDER${index}END`;
+            });
+        return { markdown: protectedMarkdown, expressions };
+    }
+
+    /** DOMPurify 清洗后用 Text 节点恢复公式，不将模型内容解析为 HTML。 */
+    function restoreMathExpressions(el, expressions) {
+        if (expressions.length === 0) return;
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        nodes.forEach(node => {
+            MATH_TOKEN_PATTERN.lastIndex = 0;
+            if (!MATH_TOKEN_PATTERN.test(node.data)) return;
+            MATH_TOKEN_PATTERN.lastIndex = 0;
+            const fragment = document.createDocumentFragment();
+            let cursor = 0;
+            let token;
+            while ((token = MATH_TOKEN_PATTERN.exec(node.data)) !== null) {
+                fragment.append(document.createTextNode(node.data.slice(cursor, token.index)));
+                fragment.append(document.createTextNode(expressions[Number(token[1])] ?? ""));
+                cursor = token.index + token[0].length;
+            }
+            fragment.append(document.createTextNode(node.data.slice(cursor)));
+            node.replaceWith(fragment);
+        });
+    }
+
+    /** 串行 MathJax 操作，并跳过已被更新消息的过期流式渲染任务。 */
+    function renderMath(el, hasMath) {
+        if (!hasMath) return;
+        const revision = (mathRenderRevision.get(el) ?? 0) + 1;
+        mathRenderRevision.set(el, revision);
+        mathRenderQueue = mathRenderQueue
+            .catch(() => undefined)
+            .then(() => whenMathReady())
+            .then(ready => {
+                if (!ready) {
+                    if (!mathMissingWarned) {
+                        mathMissingWarned = true;
+                        console.warn("公式渲染依赖未加载，公式将保留原文");
+                    }
+                    return undefined;
+                }
+                if (!el.isConnected || mathRenderRevision.get(el) !== revision) return undefined;
+                window.MathJax.typesetClear?.([el]);
+                return window.MathJax.typesetPromise([el]);
+            })
+            .catch(error => console.warn("公式渲染失败，已保留原文", error));
+    }
 
     /**
      * 渲染单条聊天消息。assistant 回答使用 GFM，用户输入始终作为纯文本处理。
@@ -49,12 +137,14 @@
         el.classList.toggle("is-plain-text", !canRenderMarkdown);
         el.classList.toggle("is-progress", showingProgress);
         if (canRenderMarkdown) {
-            const parsed = window.marked.parse(raw);
+            const protectedMath = protectMathExpressions(raw);
+            const parsed = window.marked.parse(protectedMath.markdown);
             // 限定为 Markdown 需要的展示标签，禁止模型输出表单、脚本等交互内容。
             el.innerHTML = window.DOMPurify.sanitize(parsed, {
                 ALLOWED_TAGS: MARKDOWN_ALLOWED_TAGS,
                 ALLOWED_ATTR: MARKDOWN_ALLOWED_ATTRIBUTES
             });
+            restoreMathExpressions(el, protectedMath.expressions);
             // 外部链接使用新窗口打开，并隔离 opener 以防止反向标签页劫持。
             el.querySelectorAll("a[href]").forEach(link => {
                 if (["http:", "https:"].includes(link.protocol)) {
@@ -62,6 +152,7 @@
                     link.rel = "noopener noreferrer";
                 }
             });
+            renderMath(el, protectedMath.expressions.length > 0);
         } else {
             el.textContent = raw;
         }

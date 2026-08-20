@@ -4,6 +4,7 @@ import com.llmstudy.rag.config.RetrievalProperties;
 import com.llmstudy.rag.entity.KnowledgeSegment;
 import com.llmstudy.rag.enums.RagProgressStage;
 import com.llmstudy.rag.module.llm.LlmTraceContext;
+import com.llmstudy.rag.module.knowledge.model.SegmentMetadataKeys;
 import com.llmstudy.rag.module.rag.aggregation.RrfRerankAggregator;
 import com.llmstudy.rag.module.rag.model.RagRequest;
 import com.llmstudy.rag.module.rag.model.RagResult;
@@ -16,6 +17,7 @@ import com.llmstudy.rag.module.rag.model.RetrievalDiagnoseResponse.QueryPlan;
 import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
 import com.llmstudy.rag.module.rag.prompt.RagPromptInjector;
 import com.llmstudy.rag.module.rag.query.QueryRewriter;
+import com.llmstudy.rag.module.rag.query.RetrievalQueryScope;
 import com.llmstudy.rag.module.rag.retrieval.HybridRetriever;
 import com.llmstudy.rag.module.rag.retrieval.ParentChunkExpander;
 import org.slf4j.Logger;
@@ -154,7 +156,9 @@ public class RagPipeline {
         progress.accept(RagProgressStage.EVIDENCE_ORGANIZATION);
         RrfRerankAggregator.RankedEvidence ranked = aggregator.aggregate(plan, retrieval);
         List<Expand> expand = new ArrayList<>();
-        List<RetrievalCandidate> selected = backfill(ranked.ranked(), expand);
+        RetrievalQueryScope scope = RetrievalQueryScope.from(plan);
+        List<RetrievalCandidate> selected = backfill(
+                prioritizeFocusedDocuments(ranked.ranked(), scope), expand, scope);
         return new Steps(plan, retrieval, ranked, List.copyOf(expand), selected);
     }
 
@@ -165,11 +169,18 @@ public class RagPipeline {
      * 这里再按 parent/standalone ID 去重，避免展开后两条变成同一章。</p>
      */
     private List<RetrievalCandidate> backfill(List<RetrievalCandidate> ranked,
-                                              List<Expand> expand) {
-        int topN = Math.max(1, properties.getTopN());
+                                              List<Expand> expand,
+                                              RetrievalQueryScope scope) {
+        int requestedTopN = scope.comprehensive()
+                ? Math.max(properties.getTopN(), properties.getComprehensiveTopN())
+                : properties.getTopN();
+        int topN = Math.max(1, requestedTopN);
+        int documentCap = Math.max(1, properties.getCrossDocumentMaxChunks());
         Map<String, KnowledgeSegment> cache = new HashMap<>();
+        Map<String, Integer> chunksPerDocument = new HashMap<>();
         Set<String> emitted = new HashSet<>();
         List<RetrievalCandidate> selected = new ArrayList<>();
+        List<RetrievalCandidate> deferred = new ArrayList<>();
         for (RetrievalCandidate candidate : ranked) {
             if (selected.size() >= topN) {
                 break;
@@ -181,9 +192,67 @@ public class RagPipeline {
                 continue;
             }
             expand.add(new Expand(candidate.id(), output.id(), action));
+            String documentKey = documentKey(output);
+            if (scope.crossDocument()
+                    && chunksPerDocument.getOrDefault(documentKey, 0) >= documentCap) {
+                deferred.add(output);
+                continue;
+            }
             selected.add(output);
+            chunksPerDocument.merge(documentKey, 1, Integer::sum);
+        }
+        // 文档不足时仍按原排序补足 Top-N，避免多样性约束造成证据预算浪费。
+        for (RetrievalCandidate candidate : deferred) {
+            if (selected.size() >= topN) {
+                break;
+            }
+            selected.add(candidate);
         }
         return List.copyOf(selected);
+    }
+
+    private static String documentKey(RetrievalCandidate candidate) {
+        Object docId = candidate.metadata().get(SegmentMetadataKeys.DOC_ID);
+        if (docId != null && !docId.toString().isBlank()) {
+            return "doc:" + docId;
+        }
+        Object versionId = candidate.metadata().get(SegmentMetadataKeys.VERSION_ID);
+        if (versionId != null && !versionId.toString().isBlank()) {
+            return "version:" + versionId;
+        }
+        return "chunk:" + candidate.id();
+    }
+
+    /** 跨论文题先为每篇显式点名文档保留前两条词面证据，再回到融合排序。 */
+    private static List<RetrievalCandidate> prioritizeFocusedDocuments(
+            List<RetrievalCandidate> ranked, RetrievalQueryScope scope) {
+        if (!scope.crossDocument()) {
+            return ranked;
+        }
+        List<RetrievalCandidate> prioritized = new ArrayList<>();
+        Set<String> ids = new HashSet<>();
+        for (RetrievalCandidate candidate : ranked) {
+            Object focusedRank = candidate.metadata().get(
+                    SegmentMetadataKeys.FOCUSED_DOCUMENT_RANK);
+            if (focusedRank != null && focusedRank(focusedRank) <= 2) {
+                prioritized.add(candidate);
+                ids.add(candidate.id());
+            }
+        }
+        for (RetrievalCandidate candidate : ranked) {
+            if (ids.add(candidate.id())) {
+                prioritized.add(candidate);
+            }
+        }
+        return List.copyOf(prioritized);
+    }
+
+    private static int focusedRank(Object value) {
+        try {
+            return Integer.parseInt(value.toString());
+        } catch (NumberFormatException ignored) {
+            return Integer.MAX_VALUE;
+        }
     }
 
     /**

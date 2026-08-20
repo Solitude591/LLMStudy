@@ -23,6 +23,15 @@ public class RetrievalProperties {
     /** 展开 parent 并补位后的最终证据条数。 */
     private int topN = 5;
 
+    /** 综合/多跳问题每一路的召回条数；普通事实题仍使用 perQueryTopK。 */
+    private int comprehensivePerQueryTopK = 20;
+
+    /** 综合/多跳问题展开 parent 后的最终证据条数。 */
+    private int comprehensiveTopN = 8;
+
+    /** 明确跨论文问题首轮选择时，单篇文档最多占用的证据条数。 */
+    private int crossDocumentMaxChunks = 3;
+
     /** RRF 与最终名次融合共用的 k。 */
     private int rrfK = 60;
 
@@ -62,6 +71,30 @@ public class RetrievalProperties {
 
     public void setTopN(int topN) {
         this.topN = topN;
+    }
+
+    public int getComprehensivePerQueryTopK() {
+        return comprehensivePerQueryTopK;
+    }
+
+    public void setComprehensivePerQueryTopK(int comprehensivePerQueryTopK) {
+        this.comprehensivePerQueryTopK = comprehensivePerQueryTopK;
+    }
+
+    public int getComprehensiveTopN() {
+        return comprehensiveTopN;
+    }
+
+    public void setComprehensiveTopN(int comprehensiveTopN) {
+        this.comprehensiveTopN = comprehensiveTopN;
+    }
+
+    public int getCrossDocumentMaxChunks() {
+        return crossDocumentMaxChunks;
+    }
+
+    public void setCrossDocumentMaxChunks(int crossDocumentMaxChunks) {
+        this.crossDocumentMaxChunks = crossDocumentMaxChunks;
     }
 
     public int getRrfK() {

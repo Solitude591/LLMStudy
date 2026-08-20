@@ -23,6 +23,11 @@ public final class SegmentMetadataKeys {
     public static final String VERSION_ID = "version_id";
     public static final String SOURCE_URL = "source_url";
 
+    /** 仅在单次检索链路内使用的 BGE 查询覆盖，不写入 ES/MySQL。 */
+    public static final String RERANK_QUERY_ZH = "_rerank_query_zh";
+    public static final String RERANK_QUERY_EN = "_rerank_query_en";
+    public static final String FOCUSED_DOCUMENT_RANK = "_focused_document_rank";
+
     /**
      * 历史 MySQL metadata 或 Prompt 兜底可能仍出现；新版本不再写入。
      *

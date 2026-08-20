@@ -67,6 +67,11 @@ public record RetrievalCandidate(
         return new RetrievalCandidate(id, text, metadata, rawScore, rrfScore, bgeScore, value);
     }
 
+    public RetrievalCandidate withMetadata(Map<String, Object> newMetadata) {
+        return new RetrievalCandidate(
+                id, text, newMetadata, rawScore, rrfScore, bgeScore, finalScore);
+    }
+
     /** parent 展开时替换 id/正文/metadata，保留已经算好的各阶段分数。 */
     public RetrievalCandidate withIdentity(String newId, String newText,
                                            Map<String, Object> newMetadata) {

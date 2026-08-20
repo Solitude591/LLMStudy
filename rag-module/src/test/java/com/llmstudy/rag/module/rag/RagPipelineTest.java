@@ -5,6 +5,7 @@ import com.llmstudy.rag.enums.RagProgressStage;
 import com.llmstudy.rag.module.llm.LlmFileLoggingAdvisor;
 import com.llmstudy.rag.module.llm.LlmTraceContext;
 import com.llmstudy.rag.module.llm.model.LlmPrompt;
+import com.llmstudy.rag.module.knowledge.model.SegmentMetadataKeys;
 import com.llmstudy.rag.module.rag.aggregation.RrfRerankAggregator;
 import com.llmstudy.rag.module.rag.model.RagReference;
 import com.llmstudy.rag.module.rag.model.RagRequest;
@@ -104,6 +105,44 @@ class RagPipelineTest {
                 .execute(request);
 
         assertEquals(List.of("parent-a", "parent-b"), result.chunks());
+    }
+
+    @Test
+    void crossPaperQuestionUsesExpandedBudgetAndDiversifiesDocuments() {
+        QueryRewriter rewriter = mock(QueryRewriter.class);
+        HybridRetriever retriever = mock(HybridRetriever.class);
+        RrfRerankAggregator aggregator = mock(RrfRerankAggregator.class);
+        ParentChunkExpander expander = mock(ParentChunkExpander.class);
+        RagPromptInjector injector = mock(RagPromptInjector.class);
+        RagRequest request = new RagRequest("比较三篇论文", "无");
+        RetrievalQueryPlan plan = new RetrievalQueryPlan(
+                "比较三篇论文", "比较三篇论文", "Compare three papers");
+        HybridRetriever.RetrievalResult retrieval = HybridRetriever.RetrievalResult.empty();
+        RetrievalCandidate d1a = documentCandidate("d1a", "doc-1");
+        RetrievalCandidate d1b = documentCandidate("d1b", "doc-1");
+        RetrievalCandidate d1c = documentCandidate("d1c", "doc-1");
+        RetrievalCandidate d2a = new RetrievalCandidate("d2a", "d2a text", Map.of(
+                SegmentMetadataKeys.DOC_ID, "doc-2",
+                SegmentMetadataKeys.FOCUSED_DOCUMENT_RANK, 1), 1.0, null);
+        when(rewriter.rewrite(request)).thenReturn(plan);
+        when(retriever.retrieve(plan, null)).thenReturn(retrieval);
+        when(aggregator.aggregate(plan, retrieval))
+                .thenReturn(ranked(List.of(d1a, d1b, d1c, d2a)));
+        when(expander.expandOne(any(), anyMap()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(injector.inject(eq(request), eq(plan), any()))
+                .thenReturn(new RagPromptInjector.Injection(null, List.of()));
+        RetrievalProperties properties = new RetrievalProperties();
+        properties.setTopN(2);
+        properties.setComprehensiveTopN(4);
+        properties.setCrossDocumentMaxChunks(2);
+
+        RagResult result = new RagPipeline(
+                rewriter, retriever, aggregator, expander, injector, properties)
+                .execute(request);
+
+        assertEquals(List.of("d2a text", "d1a text", "d1b text", "d1c text"),
+                result.chunks());
     }
 
     @Test
@@ -243,5 +282,10 @@ class RagPipelineTest {
         return new RrfRerankAggregator.RankedEvidence(
                 candidates, candidates, candidates, candidates,
                 false, "too-few-candidates", 0, "query");
+    }
+
+    private static RetrievalCandidate documentCandidate(String id, String docId) {
+        return new RetrievalCandidate(id, id + " text",
+                Map.of(SegmentMetadataKeys.DOC_ID, docId), 1.0, null);
     }
 }

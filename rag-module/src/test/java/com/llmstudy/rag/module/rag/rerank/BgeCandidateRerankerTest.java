@@ -101,6 +101,27 @@ class BgeCandidateRerankerTest {
     }
 
     @Test
+    void focusedCandidateCanOverrideLanguageSpecificRerankQuery() {
+        BgeScoringModel model = mock(BgeScoringModel.class);
+        when(model.scorePairs(anyList(), anyList()))
+                .thenReturn(Response.from(List.of(0.9)));
+        RetrievalCandidate focused = new RetrievalCandidate(
+                "focused", "memory evidence", Map.of(
+                        SegmentMetadataKeys.LANGUAGE, "EN",
+                        SegmentMetadataKeys.RERANK_QUERY_EN, "GPU memory limitation"),
+                1.0, null);
+
+        new BgeCandidateReranker(enabled(), model).rerank(
+                new RetrievalQueryPlan("q", "完整中文问题", "full English question"),
+                List.of(focused));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> queryCaptor = ArgumentCaptor.forClass(List.class);
+        verify(model).scorePairs(queryCaptor.capture(), anyList());
+        assertEquals(List.of("GPU memory limitation"), queryCaptor.getValue());
+    }
+
+    @Test
     void inferenceFailureKeepsOriginalOrderWithReason() {
         BgeScoringModel model = mock(BgeScoringModel.class);
         when(model.scorePairs(anyList(), anyList()))

@@ -90,15 +90,32 @@ public class BgeCandidateReranker implements CandidateReranker {
     static String queryFor(RetrievalQueryPlan plan, RetrievalCandidate candidate) {
         Object raw = candidate.metadata().get(SegmentMetadataKeys.LANGUAGE);
         return switch (DocumentLanguage.fromValue(raw == null ? null : raw.toString())) {
-            case ZH -> plan.standaloneZh();
-            case EN -> plan.standaloneEn();
-            case UNKNOWN -> bilingual(plan);
+            case ZH -> override(candidate, SegmentMetadataKeys.RERANK_QUERY_ZH,
+                    plan.standaloneZh());
+            case EN -> override(candidate, SegmentMetadataKeys.RERANK_QUERY_EN,
+                    plan.standaloneEn());
+            case UNKNOWN -> bilingual(
+                    override(candidate, SegmentMetadataKeys.RERANK_QUERY_ZH,
+                            plan.standaloneZh()),
+                    override(candidate, SegmentMetadataKeys.RERANK_QUERY_EN,
+                            plan.standaloneEn()));
         };
     }
 
     static String bilingual(RetrievalQueryPlan plan) {
-        return "中文查询: " + plan.standaloneZh()
-                + "\nEnglish query: " + plan.standaloneEn();
+        return bilingual(plan.standaloneZh(), plan.standaloneEn());
+    }
+
+    private static String bilingual(String zh, String en) {
+        return "中文查询: " + zh + "\nEnglish query: " + en;
+    }
+
+    private static String override(RetrievalCandidate candidate,
+                                   String key,
+                                   String fallback) {
+        Object value = candidate.metadata().get(key);
+        return value == null || value.toString().isBlank()
+                ? fallback : value.toString();
     }
 
     /** 诊断保留 String，输出语言选择策略及三种实际查询。 */

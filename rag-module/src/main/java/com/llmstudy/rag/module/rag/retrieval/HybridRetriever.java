@@ -2,9 +2,13 @@ package com.llmstudy.rag.module.rag.retrieval;
 
 import com.llmstudy.rag.auth.model.AccessContext;
 import com.llmstudy.rag.config.RetrievalProperties;
+import com.llmstudy.rag.entity.KnowledgeDocument;
 import com.llmstudy.rag.mapper.KnowledgeDocumentMapper;
+import com.llmstudy.rag.module.knowledge.model.SegmentMetadataKeys;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
 import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
+import com.llmstudy.rag.module.rag.query.DocumentMentionMatcher;
+import com.llmstudy.rag.module.rag.query.RetrievalQueryScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +16,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -82,9 +88,38 @@ public class HybridRetriever {
         if (currentVersionIds != null && currentVersionIds.isEmpty()) {
             return RetrievalResult.empty();
         }
-        int topK = Math.max(1, properties.getPerQueryTopK());
+        RetrievalQueryScope scope = RetrievalQueryScope.from(plan);
+        List<KnowledgeDocument> availableDocuments = scope.crossDocument()
+                && documentMapper != null
+                ? accessContext == null
+                        ? documentMapper.findAll()
+                        : documentMapper.findAccessible(
+                                accessContext.userId(), accessContext.organizationId(),
+                                accessContext.isSystemAdmin())
+                : List.of();
+        List<String> mentionedVersions = DocumentMentionMatcher.mentionedVersionIds(
+                plan.originalQuestion(), availableDocuments);
+        if (currentVersionIds != null) {
+            mentionedVersions = mentionedVersions.stream()
+                    .filter(currentVersionIds::contains)
+                    .toList();
+        }
+        int requestedTopK = scope.comprehensive()
+                ? Math.max(properties.getPerQueryTopK(),
+                        properties.getComprehensivePerQueryTopK())
+                : properties.getPerQueryTopK();
+        int topK = Math.max(1, requestedTopK);
+        List<String> targetVersions = mentionedVersions;
+        RetrievalQueryPlan focusedPlan = targetVersions.size() < 2 ? plan
+                : new RetrievalQueryPlan(
+                        plan.originalQuestion(),
+                        DocumentMentionMatcher.withoutDocumentMentions(
+                                plan.standaloneZh(), availableDocuments),
+                        DocumentMentionMatcher.withoutDocumentMentions(
+                                plan.standaloneEn(), availableDocuments));
         CompletableFuture<Lane> bm25Future = CompletableFuture.supplyAsync(
-                () -> runBm25(plan, currentVersionIds, topK), retrievalExecutor);
+                () -> runBm25(plan, focusedPlan, currentVersionIds, targetVersions, topK),
+                retrievalExecutor);
         CompletableFuture<Lane> knnFuture = CompletableFuture.supplyAsync(
                 () -> runKnn(plan, currentVersionIds, topK), retrievalExecutor);
         RetrievalResult result = new RetrievalResult(bm25Future.join(), knnFuture.join());
@@ -100,15 +135,66 @@ public class HybridRetriever {
         return result;
     }
 
-    private Lane runBm25(RetrievalQueryPlan plan, List<String> versionIds, int topK) {
+    private Lane runBm25(RetrievalQueryPlan plan,
+                         RetrievalQueryPlan focusedPlan,
+                         List<String> versionIds,
+                         List<String> mentionedVersions, int topK) {
         long started = System.nanoTime();
         try {
+            List<RetrievalCandidate> global =
+                    bm25Retriever.retrieve(plan, versionIds, topK);
+            List<List<RetrievalCandidate>> focused = new java.util.ArrayList<>();
+            if (mentionedVersions.size() >= 2) {
+                int perDocument = Math.max(1, properties.getCrossDocumentMaxChunks());
+                for (String versionId : mentionedVersions) {
+                    List<RetrievalCandidate> documentHits = bm25Retriever.retrieve(
+                            focusedPlan, List.of(versionId), perDocument);
+                    List<RetrievalCandidate> annotated = new java.util.ArrayList<>();
+                    for (int index = 0; index < documentHits.size(); index++) {
+                        annotated.add(withFocusedRerankQuery(
+                                documentHits.get(index), focusedPlan, index + 1));
+                    }
+                    focused.add(List.copyOf(annotated));
+                }
+            }
             return Lane.ok("bm25", diagnose(plan),
-                    bm25Retriever.retrieve(plan, versionIds, topK), elapsedMs(started));
+                    mergeFocused(focused, global, topK), elapsedMs(started));
         } catch (Exception e) {
             log.error("BM25 检索失败，继续 KNN 通道", e);
             return Lane.failed("bm25", diagnose(plan), e, elapsedMs(started));
         }
+    }
+
+    private static RetrievalCandidate withFocusedRerankQuery(
+            RetrievalCandidate candidate,
+            RetrievalQueryPlan focusedPlan,
+            int documentRank) {
+        Map<String, Object> metadata = new LinkedHashMap<>(candidate.metadata());
+        metadata.put(SegmentMetadataKeys.RERANK_QUERY_ZH, focusedPlan.standaloneZh());
+        metadata.put(SegmentMetadataKeys.RERANK_QUERY_EN, focusedPlan.standaloneEn());
+        metadata.put(SegmentMetadataKeys.FOCUSED_DOCUMENT_RANK, documentRank);
+        return candidate.withMetadata(metadata);
+    }
+
+    /** 每篇先取第 1 条、再取第 2 条，随后用全库结果补足，保证显式点名文档入围。 */
+    private static List<RetrievalCandidate> mergeFocused(
+            List<List<RetrievalCandidate>> focused,
+            List<RetrievalCandidate> global,
+            int limit) {
+        Map<String, RetrievalCandidate> merged = new LinkedHashMap<>();
+        int maxFocused = focused.stream().mapToInt(List::size).max().orElse(0);
+        for (int rank = 0; rank < maxFocused; rank++) {
+            for (List<RetrievalCandidate> documentHits : focused) {
+                if (rank < documentHits.size()) {
+                    RetrievalCandidate candidate = documentHits.get(rank);
+                    merged.putIfAbsent(candidate.id(), candidate);
+                }
+            }
+        }
+        for (RetrievalCandidate candidate : global) {
+            merged.putIfAbsent(candidate.id(), candidate);
+        }
+        return merged.values().stream().limit(Math.max(1, limit)).toList();
     }
 
     private Lane runKnn(RetrievalQueryPlan plan, List<String> versionIds, int topK) {

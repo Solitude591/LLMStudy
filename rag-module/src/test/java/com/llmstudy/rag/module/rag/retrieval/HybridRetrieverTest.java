@@ -88,6 +88,25 @@ class HybridRetrieverTest {
     }
 
     @Test
+    void comprehensiveQuestionExpandsBothLaneBudgets() throws Exception {
+        RetrievalQueryPlan plan = new RetrievalQueryPlan(
+                "比较三篇论文的显存策略", "比较三篇论文的显存策略",
+                "Compare the memory strategies in three papers");
+        Bm25Retriever bm25 = mock(Bm25Retriever.class);
+        KnnRetriever knn = mock(KnnRetriever.class);
+        RetrievalProperties properties = new RetrievalProperties();
+        properties.setPerQueryTopK(10);
+        properties.setComprehensivePerQueryTopK(20);
+        when(bm25.retrieve(plan, null, 20)).thenReturn(List.of());
+        when(knn.retrieve(plan, null, 20)).thenReturn(List.of());
+
+        new HybridRetriever(bm25, knn, properties).retrieve(plan);
+
+        verify(bm25).retrieve(plan, null, 20);
+        verify(knn).retrieve(plan, null, 20);
+    }
+
+    @Test
     void bm25AndKnnRunConcurrently() throws Exception {
         Bm25Retriever bm25 = mock(Bm25Retriever.class);
         KnnRetriever knn = mock(KnnRetriever.class);

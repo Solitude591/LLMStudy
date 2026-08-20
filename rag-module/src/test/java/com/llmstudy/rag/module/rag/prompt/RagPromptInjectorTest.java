@@ -49,6 +49,8 @@ class RagPromptInjectorTest {
         assertTrue(result.prompt().userMessage().contains("评价指标: F1"));
         assertTrue(result.prompt().userMessage().contains("[1]"));
         assertTrue(result.prompt().userMessage().contains("F1 提升了 2.1 个百分点"));
+        assertTrue(result.prompt().userMessage().contains("<answer_contract>"));
+        assertTrue(result.prompt().userMessage().contains("逐项覆盖问题明确要求"));
         assertTrue(result.prompt().userMessage().contains("<reference_information>"));
         assertFalse(result.prompt().systemMessage().contains("F1 提升了 2.1 个百分点"));
         assertTrue(result.prompt().userMessage().contains("章节: 实验 > 主结果"));

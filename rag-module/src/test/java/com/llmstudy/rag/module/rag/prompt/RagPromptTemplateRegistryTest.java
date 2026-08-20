@@ -47,7 +47,19 @@ class RagPromptTemplateRegistryTest {
             assertTrue(rendered.contains("intent"));
             assertTrue(rendered.contains("evidence"));
             assertTrue(rendered.contains("question"));
+            assertTrue(rendered.contains("<answer_contract>"));
+            assertTrue(rendered.contains("简单事实题默认用 1–3 句"));
         }
+    }
+
+    @Test
+    void genericTemplateRequiresDirectEvidenceBoundAnswer() {
+        RagPromptTemplateRegistry registry =
+                new RagPromptTemplateRegistry(new DefaultResourceLoader());
+        String generic = registry.select(RagAnswerMode.GENERIC).systemTemplate();
+
+        assertTrue(generic.contains("最短完整答案"));
+        assertTrue(generic.contains("不得擅自添加应用场景"));
     }
 
     @Test

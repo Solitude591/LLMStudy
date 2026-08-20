@@ -95,7 +95,7 @@
 
 本轮核心正确性指标显著改善，满足“改善后先提交再做下一次改动”的约束。
 
-提交：`d93fb08 feat(rag): add segmentation eval corpus and tighten answers`
+提交：`c1cdd76 feat(rag): add segmentation eval corpus and tighten answers`
 
 ## 迭代 2：按查询范围自适应证据预算（检索层）
 
@@ -133,7 +133,7 @@
 
 本轮检索指标有明确改善，先提交再进入生成稳定性改动。
 
-提交：`085b4ec feat(rag): improve evidence coverage for synthesis queries`
+提交：`70ac922 feat(rag): improve evidence coverage for synthesis queries`
 
 ## 迭代 3：RAG 回答确定性生成（生成层）
 
@@ -161,4 +161,6 @@
 2. **Context 指标的小幅波动不由本轮代码导致。** 本轮只向最终生成请求传入 temperature，检索管线未变；新增跨论文题 Q24/Q25 的 Recall 仍为 1.0/0.75，远高于基线的 0.5/0.25。总体 Recall 的变化来自 RAGAS 评估模型对相同证据的判分波动。
 3. **剩余主要问题仍是“答了未问内容”。** Q5 只要求方案选择和成本控制，答案却增加 LoRA 超参数和实验性能数字，导致 Relevancy 0.5938、Correctness 0.5977。下一轮应要求子问题与答案要点一一对应，明确禁止输出未被询问的超参数、实验结果和背景。
 
-本轮生成层的 Faithfulness 与 Answer Correctness 有改善，先提交再进入答案要点对齐改动。
+本轮生成层的 Faithfulness 与 Answer Correctness 有改善。提交后按用户要求停止后续迭代，不再进行第四轮评测。
+
+提交：`415054b feat(rag): stabilize evidence-grounded answer generation`

@@ -1,10 +1,12 @@
 package com.llmstudy.rag.module.chat.stream;
 
 import com.llmstudy.rag.entity.ChatMessage;
+import com.llmstudy.rag.config.RagAnswerProperties;
 import com.llmstudy.rag.module.chat.conversation.ConversationService;
 import com.llmstudy.rag.module.chat.model.ChatPreparation;
 import com.llmstudy.rag.module.chat.model.ChatStreamEvent;
 import com.llmstudy.rag.module.llm.model.LlmPrompt;
+import com.llmstudy.rag.module.rag.model.RagReference;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
@@ -45,7 +47,8 @@ class ChatStreamExecutorTest {
                 null, List.of(), "no knowledge");
 
         List<ChatStreamEvent> events = new ChatStreamExecutor(
-                mock(ChatClient.class), conversations, JsonMapper.builder().build())
+                mock(ChatClient.class), conversations, JsonMapper.builder().build(),
+                new RagAnswerProperties())
                 .execute(preparation).collectList().block();
 
         assertEquals(List.of(ChatStreamEvent.Type.DELTA, ChatStreamEvent.Type.DONE),
@@ -73,7 +76,7 @@ class ChatStreamExecutorTest {
 
         List<ChatStreamEvent> events = new ChatStreamExecutor(
                 ChatClient.builder(model).build(), conversations,
-                JsonMapper.builder().build())
+                JsonMapper.builder().build(), new RagAnswerProperties())
                 .execute(preparation).collectList().block();
 
         assertEquals(ChatStreamEvent.Type.DONE, events.getLast().type());
@@ -87,5 +90,34 @@ class ChatStreamExecutorTest {
         assertTrue(messages.get(3) instanceof UserMessage);
         assertEquals("系统规则", messages.get(0).getText());
         assertEquals("当前用户数据", messages.get(3).getText());
+    }
+
+    @Test
+    void ragStreamUsesDeterministicAnswerTemperature() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(OpenAiChatOptions.builder().build());
+        when(model.stream(any(Prompt.class))).thenReturn(Flux.just(
+                ChatResponse.builder().generations(List.of(new Generation(
+                        new AssistantMessage("回答")))).build()));
+        ConversationService conversations = mock(ConversationService.class);
+        ChatMessage saved = new ChatMessage();
+        saved.setMessageId("assistant-1");
+        when(conversations.saveMessage(eq("conversation-1"), any(),
+                eq("回答"), eq(null), eq(null), any(), eq(null)))
+                .thenReturn(saved);
+        RagReference reference = new RagReference(
+                1, "doc", "chunk", null, null, null, null, 0.9, null);
+        ChatPreparation preparation = new ChatPreparation(
+                "conversation-1", "title", "user-1", List.of(),
+                new LlmPrompt("系统规则", "当前用户数据"), List.of(reference), null);
+
+        new ChatStreamExecutor(ChatClient.builder(model).build(), conversations,
+                JsonMapper.builder().build(), new RagAnswerProperties())
+                .execute(preparation).collectList().block();
+
+        ArgumentCaptor<Prompt> captor = ArgumentCaptor.forClass(Prompt.class);
+        verify(model).stream(captor.capture());
+        assertEquals(0.0, ((OpenAiChatOptions) captor.getValue().getOptions())
+                .getTemperature());
     }
 }

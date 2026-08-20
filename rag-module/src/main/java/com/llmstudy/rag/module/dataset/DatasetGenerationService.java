@@ -1,6 +1,7 @@
 package com.llmstudy.rag.module.dataset;
 
 import com.llmstudy.rag.dto.DatasetGenerateResponse;
+import com.llmstudy.rag.config.RagAnswerProperties;
 import com.llmstudy.rag.module.chat.flow.RagChatFlow;
 import com.llmstudy.rag.module.chat.stream.ChatStreamExecutor;
 import com.llmstudy.rag.module.llm.LlmFileLoggingAdvisor;
@@ -9,6 +10,7 @@ import com.llmstudy.rag.module.rag.model.RagIntentContext;
 import com.llmstudy.rag.module.rag.model.RagRequest;
 import com.llmstudy.rag.module.rag.model.RagResult;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 
 /**
@@ -19,10 +21,14 @@ public class DatasetGenerationService {
 
     private final RagPipeline ragPipeline;
     private final ChatClient chatClient;
+    private final RagAnswerProperties answerProperties;
 
-    public DatasetGenerationService(RagPipeline ragPipeline, ChatClient chatClient) {
+    public DatasetGenerationService(RagPipeline ragPipeline,
+                                    ChatClient chatClient,
+                                    RagAnswerProperties answerProperties) {
         this.ragPipeline = ragPipeline;
         this.chatClient = chatClient;
+        this.answerProperties = answerProperties;
     }
 
     /**
@@ -56,6 +62,8 @@ public class DatasetGenerationService {
             request = request.system(result.prompt().systemMessage());
         }
         var response = request
+                .options(OpenAiChatOptions.builder()
+                        .temperature(answerProperties.getTemperature()))
                 .user(result.prompt().userMessage())
                 .advisors(spec -> spec.param(LlmFileLoggingAdvisor.STAGE_KEY, "dataset-generate"))
                 .call()

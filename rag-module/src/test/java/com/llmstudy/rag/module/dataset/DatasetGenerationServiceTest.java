@@ -1,6 +1,7 @@
 package com.llmstudy.rag.module.dataset;
 
 import com.llmstudy.rag.dto.DatasetGenerateResponse;
+import com.llmstudy.rag.config.RagAnswerProperties;
 import com.llmstudy.rag.module.chat.flow.RagChatFlow;
 import com.llmstudy.rag.module.llm.model.LlmPrompt;
 import com.llmstudy.rag.module.rag.RagPipeline;
@@ -43,7 +44,8 @@ class DatasetGenerationServiceTest {
         pipeline = mock(RagPipeline.class);
         chatModel = mock(ChatModel.class);
         when(chatModel.getOptions()).thenReturn(OpenAiChatOptions.builder().build());
-        service = new DatasetGenerationService(pipeline, ChatClient.builder(chatModel).build());
+        service = new DatasetGenerationService(
+                pipeline, ChatClient.builder(chatModel).build(), new RagAnswerProperties());
     }
 
     @Test
@@ -77,6 +79,10 @@ class DatasetGenerationServiceTest {
         assertEquals("原问题", response.query());
         assertEquals("Hybrid RAG 最高[1]。", response.response());
         assertEquals(List.of("证据正文"), response.chunks());
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(prompt.capture());
+        assertEquals(0.0, ((OpenAiChatOptions) prompt.getValue().getOptions())
+                .getTemperature());
     }
 
     @Test

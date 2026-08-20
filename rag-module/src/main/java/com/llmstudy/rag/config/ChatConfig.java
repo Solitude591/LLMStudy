@@ -16,7 +16,8 @@ import java.util.concurrent.Executors;
 @EnableConfigurationProperties({
         ChatProperties.class,
         TitleSummaryProperties.class,
-        IntentProperties.class
+        IntentProperties.class,
+        RagAnswerProperties.class
 })
 public class ChatConfig {
 

@@ -1,6 +1,7 @@
 package com.llmstudy.rag.module.chat.stream;
 
 import com.llmstudy.rag.entity.ChatMessage;
+import com.llmstudy.rag.config.RagAnswerProperties;
 import com.llmstudy.rag.enums.MessageType;
 import com.llmstudy.rag.module.chat.conversation.ConversationService;
 import com.llmstudy.rag.module.chat.model.ChatPreparation;
@@ -9,6 +10,7 @@ import com.llmstudy.rag.module.llm.LlmFileLoggingAdvisor;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -24,13 +26,16 @@ public class ChatStreamExecutor {
     private final ChatClient chatClient;
     private final ConversationService conversationService;
     private final JsonMapper jsonMapper;
+    private final RagAnswerProperties answerProperties;
 
     public ChatStreamExecutor(ChatClient chatClient,
                               ConversationService conversationService,
-                              JsonMapper jsonMapper) {
+                              JsonMapper jsonMapper,
+                              RagAnswerProperties answerProperties) {
         this.chatClient = chatClient;
         this.conversationService = conversationService;
         this.jsonMapper = jsonMapper;
+        this.answerProperties = answerProperties;
     }
 
     /**
@@ -50,6 +55,10 @@ public class ChatStreamExecutor {
         ChatClient.ChatClientRequestSpec request = chatClient.prompt();
         if (preparation.prompt().hasSystemMessage()) {
             request = request.system(preparation.prompt().systemMessage());
+        }
+        if (!preparation.ragReferences().isEmpty()) {
+            request = request.options(OpenAiChatOptions.builder()
+                    .temperature(answerProperties.getTemperature()));
         }
         Flux<ChatStreamEvent> deltas = request
                 .messages(preparation.history())

@@ -20,10 +20,8 @@ class BgeScoringModelIntegrationTest {
         RerankerProperties properties = new RerankerProperties();
         properties.setEnabled(true);
         properties.setBatchSize(2);
-        properties.setModelPath(
-                "src/main/resources/models/bge-reranker/model_quantized.onnx");
-        properties.setTokenizerPath(
-                "src/main/resources/models/bge-reranker/tokenizer.json");
+        properties.setModelPath("./models/bge-reranker/model_quantized.onnx");
+        properties.setTokenizerPath("./models/bge-reranker/tokenizer.json");
 
         try (BgeScoringModel model = new BgeScoringModel(
                 properties, new DefaultResourceLoader())) {

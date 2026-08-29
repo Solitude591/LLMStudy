@@ -1,5 +1,8 @@
 /target/
+/logs/
+/models/
 /src/main/resources/application.yml
+/src/main/resources/models/
 .DS_Store
 *.log
 .env

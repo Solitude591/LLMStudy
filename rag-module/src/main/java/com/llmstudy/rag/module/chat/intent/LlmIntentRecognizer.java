@@ -70,7 +70,7 @@ public class LlmIntentRecognizer implements IntentRecognizer {
                     normalized.related(), normalized.intent(), normalized.fallback());
             return normalized;
         } catch (Exception e) {
-            log.warn("意图识别失败，保守进入 RAG: {}", e.getMessage());
+            log.warn("意图识别失败，保守进入 RAG: {}", e.getMessage(),e);
             return IntentRecognitionResult.fallback(
                     "意图识别失败，保守进入 RAG: " + e.getClass().getSimpleName());
         }

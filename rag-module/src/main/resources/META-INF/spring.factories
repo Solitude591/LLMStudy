@@ -1,0 +1,2 @@
+org.springframework.boot.EnvironmentPostProcessor=\
+com.llmstudy.rag.config.RagPathEnvironmentPostProcessor

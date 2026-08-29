@@ -3,11 +3,23 @@ spring:
     name: rag-module
 
   datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
     # createDatabaseIfNotExist=true 会在数据库不存在时自动创建（账号需要有 CREATE 权限）
     url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:rag}?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: ${MYSQL_USER:rag}
     password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    druid:
+      initial-size: 5
+      min-idle: 5
+      max-active: 20
+      max-wait: 60000
+      time-between-eviction-runs-millis: 60000
+      min-evictable-idle-time-millis: 300000
+      validation-query: SELECT 1
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
 
   sql:
     init:
@@ -91,8 +103,8 @@ mineru:
 
 rag:
   llm-log:
-    # 独立保存完整 LLM request/response；相对路径以应用启动目录为基准
-    path: ${RAG_LLM_LOG_PATH:logs}
+    # 默认写入 rag-module/logs；显式设置 RAG_LLM_LOG_PATH 时不再按模块定位
+    path: ${RAG_LLM_LOG_PATH:}
 
   chat:
     # 每次请求最多加载的历史消息数
@@ -132,8 +144,8 @@ rag:
     worker-id: ${RAG_SNOWFLAKE_WORKER_ID:1}
 
   reranker:
-    # 模型不打入 JAR；部署时将 models/bge-reranker 放在 JAR 同级目录，
-    # 或通过环境变量指向其他外部路径。
+    # 模型不打入 JAR；默认读 rag-module/models/bge-reranker，
+    # 部署时也可放在 JAR 同级目录，或通过环境变量指向其他外部路径。
     enabled: ${BGE_RERANKER_ENABLED:true}
     model-path: ${BGE_RERANKER_MODEL_PATH:./models/bge-reranker/model_quantized.onnx}
     tokenizer-path: ${BGE_RERANKER_TOKENIZER_PATH:./models/bge-reranker/tokenizer.json}

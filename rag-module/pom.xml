@@ -80,6 +80,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Druid：替换 Spring Boot 默认 HikariCP -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>druid-spring-boot-4-starter</artifactId>
+            <version>1.2.28</version>
+        </dependency>
+
         <!-- Spring Data Redis：KNN 父分片二级缓存，加速子分片到父分片的回查 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

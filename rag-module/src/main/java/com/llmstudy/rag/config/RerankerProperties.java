@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 本地 BGE ReRanker 配置。
  *
  * <p>模型路径同时支持 {@code classpath:} 资源与外部文件，默认使用
- * JAR 同级的 {@code models/bge-reranker} 目录；禁用时检索器
+ * {@code rag-module/models/bge-reranker}；部署时可放在 JAR 同级目录。禁用时检索器
  * 跳过重排，直接保留原排序。</p>
  */
 @ConfigurationProperties(prefix = "rag.reranker")

@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500" role="img" aria-labelledby="title desc">
+  <title id="title">LLMStudy RAG 架构</title>
+  <desc id="desc">文档经解析、分片和向量化写入 Elasticsearch；用户问题经改写、混合检索和重排后由 LLM 回答，再用 RAGAS 评测。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#94a3b8"/>
+    </marker>
+    <style>
+      text { font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="500" fill="#ffffff"/>
+
+  <text x="48" y="38" font-size="20" font-weight="650" fill="#0f172a">LLMStudy RAG</text>
+  <text x="1152" y="38" text-anchor="end" font-size="13" fill="#94a3b8">入库 · 检索 · 生成 · 评测</text>
+
+  <!-- Ingest lane -->
+  <rect x="32" y="58" width="1136" height="148" rx="16" fill="#f8fafc"/>
+  <text x="52" y="82" font-size="12" font-weight="600" fill="#64748b">文档入库</text>
+
+  <g>
+    <rect x="52" y="98" width="172" height="88" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="138" y="136" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">文档上传</text>
+    <text x="138" y="158" text-anchor="middle" font-size="12" fill="#64748b">PDF / Word</text>
+  </g>
+  <g>
+    <rect x="272" y="98" width="172" height="88" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="358" y="136" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">MinIO</text>
+    <text x="358" y="158" text-anchor="middle" font-size="12" fill="#64748b">原文与解析产物</text>
+  </g>
+  <g>
+    <rect x="492" y="98" width="172" height="88" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="578" y="136" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">MinerU</text>
+    <text x="578" y="158" text-anchor="middle" font-size="12" fill="#64748b">Markdown · 图表</text>
+  </g>
+  <g>
+    <rect x="712" y="98" width="172" height="88" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="798" y="136" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">结构化分片</text>
+    <text x="798" y="158" text-anchor="middle" font-size="12" fill="#64748b">父子块 · 元数据</text>
+  </g>
+  <g>
+    <rect x="932" y="98" width="216" height="88" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="1040" y="136" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">Embedding</text>
+    <text x="1040" y="158" text-anchor="middle" font-size="12" fill="#64748b">语义向量化</text>
+  </g>
+
+  <path d="M224 142H264" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M444 142H484" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M664 142H704" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M884 142H924" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Index hub -->
+  <path d="M1040 186V208" fill="none" stroke="#93c5fd" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="1050" y="202" font-size="11" fill="#64748b">写入</text>
+
+  <rect x="32" y="212" width="1136" height="56" rx="12" fill="#eff6ff" stroke="#dbeafe"/>
+  <text x="600" y="236" text-anchor="middle" font-size="15" font-weight="600" fill="#1e3a8a">Elasticsearch</text>
+  <text x="600" y="256" text-anchor="middle" font-size="12" fill="#3b82f6">BM25 关键词索引  ·  KNN 向量索引  ·  仅检索已发布版本</text>
+
+  <text x="518" y="298" font-size="11" fill="#64748b">检索</text>
+
+  <!-- Query lane -->
+  <rect x="32" y="318" width="1136" height="140" rx="16" fill="#f8fafc"/>
+  <text x="52" y="342" font-size="12" font-weight="600" fill="#64748b">问答与评测</text>
+
+  <g>
+    <rect x="52" y="356" width="148" height="84" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="126" y="392" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">用户问题</text>
+    <text x="126" y="414" text-anchor="middle" font-size="12" fill="#64748b">自然语言</text>
+  </g>
+  <g>
+    <rect x="240" y="356" width="148" height="84" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="314" y="392" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">查询改写</text>
+    <text x="314" y="414" text-anchor="middle" font-size="12" fill="#64748b">意图 · 中英文</text>
+  </g>
+  <g>
+    <rect x="428" y="356" width="160" height="84" rx="12" fill="#ffffff" stroke="#bfdbfe"/>
+    <text x="508" y="392" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">混合检索</text>
+    <text x="508" y="414" text-anchor="middle" font-size="12" fill="#64748b">BM25 + KNN</text>
+  </g>
+  <g>
+    <rect x="628" y="356" width="148" height="84" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="702" y="392" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">融合重排</text>
+    <text x="702" y="414" text-anchor="middle" font-size="12" fill="#64748b">RRF + BGE</text>
+  </g>
+  <g>
+    <rect x="816" y="356" width="148" height="84" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="890" y="392" text-anchor="middle" font-size="15" font-weight="600" fill="#0f172a">LLM 回答</text>
+    <text x="890" y="414" text-anchor="middle" font-size="12" fill="#64748b">引用 · SSE</text>
+  </g>
+  <g>
+    <rect x="1004" y="356" width="144" height="84" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="1076" y="392" text-anchor="middle" font-size="15" font-weight="600" fill="#14532d">RAGAS</text>
+    <text x="1076" y="414" text-anchor="middle" font-size="12" fill="#16a34a">五项指标</text>
+  </g>
+
+  <path d="M200 398H232" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M388 398H420" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M588 398H620" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M776 398H808" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M964 398H996" fill="none" stroke="#cbd5e1" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M508 268V348" fill="none" stroke="#93c5fd" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <text x="48" y="484" font-size="12" fill="#94a3b8">rag-module 负责入库、检索与生成</text>
+  <text x="1152" y="484" text-anchor="end" font-size="12" fill="#94a3b8">ragas_demo 离线评测真实链路</text>
+</svg>

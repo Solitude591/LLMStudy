@@ -23,7 +23,7 @@ class RagTuningDefaultsTest {
         try (InputStream input = getClass().getResourceAsStream("/application.example.yml")) {
             assertNotNull(input);
             String yaml = new String(input.readAllBytes(), StandardCharsets.UTF_8);
-            assertTrue(yaml.contains("top-n: 5"));
+            assertTrue(yaml.contains("top-n: ${RAG_RETRIEVAL_TOP_N:5}"));
             assertTrue(yaml.contains("BGE_RERANKER_MIN_SCORE:0.6"));
         }
     }

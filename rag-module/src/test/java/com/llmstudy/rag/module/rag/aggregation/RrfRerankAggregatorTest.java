@@ -46,6 +46,25 @@ class RrfRerankAggregatorTest {
     }
 
     @Test
+    void pageHintPromotesOverlappingChildBeforeGrouping() {
+        CandidateReranker reranker = mock(CandidateReranker.class);
+        when(reranker.rerank(any(), anyList())).thenAnswer(invocation ->
+                RerankResult.fallback("too-few-candidates", 0, invocation.getArgument(1)));
+        RetrievalCandidate title = child("c-title", "p-title", 0.9, 1, 1);
+        RetrievalCandidate table = child("c-table", "p-table", 0.2, 4, 4);
+        HybridRetriever.RetrievalResult retrieval = new HybridRetriever.RetrievalResult(
+                HybridRetriever.Lane.ok("bm25", "query", List.of(title, table), 1),
+                HybridRetriever.Lane.ok("knn", "query", List.of(), 1));
+
+        RrfRerankAggregator.RankedEvidence result = aggregator(reranker).aggregate(
+                new RetrievalQueryPlan("请定位第 4 页的表格", "第 4 页表格", "table on page 4"),
+                retrieval);
+
+        assertEquals("c-table", result.grouped().getFirst().id());
+        assertEquals("c-table", result.ranked().getFirst().id());
+    }
+
+    @Test
     void blendsBgeAndRetrievalRanksWhenBgeSucceeds() {
         CandidateReranker reranker = mock(CandidateReranker.class);
         RetrievalCandidate first = child("c1", "p1", 0.4).withRrfScore(0.4);
@@ -70,7 +89,19 @@ class RrfRerankAggregatorTest {
     }
 
     private static RetrievalCandidate child(String id, String parentId, double raw) {
-        return new RetrievalCandidate(id, "text-" + id,
-                Map.of(SegmentMetadataKeys.PARENT_CHUNK_ID, parentId), raw, null);
+        return child(id, parentId, raw, null, null);
+    }
+
+    private static RetrievalCandidate child(String id, String parentId, double raw,
+                                            Integer pageStart, Integer pageEnd) {
+        java.util.LinkedHashMap<String, Object> metadata = new java.util.LinkedHashMap<>();
+        metadata.put(SegmentMetadataKeys.PARENT_CHUNK_ID, parentId);
+        if (pageStart != null) {
+            metadata.put(SegmentMetadataKeys.PAGE_START, pageStart);
+        }
+        if (pageEnd != null) {
+            metadata.put(SegmentMetadataKeys.PAGE_END, pageEnd);
+        }
+        return new RetrievalCandidate(id, "text-" + id, metadata, raw, null);
     }
 }

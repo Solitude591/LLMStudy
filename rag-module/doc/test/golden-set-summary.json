@@ -1,0 +1,74 @@
+{
+  "created_at": "2026-09-02T19:02:50.418956+08:00",
+  "question_count": 222,
+  "answerable_count": 197,
+  "unanswerable_count": 25,
+  "category_counts": {
+    "fact": 70,
+    "table": 32,
+    "cross_section": 35,
+    "cross_document": 35,
+    "ambiguous": 25,
+    "unanswerable": 25
+  },
+  "language_counts": {
+    "en": 80,
+    "zh": 122,
+    "mixed": 20
+  },
+  "difficulty_counts": {
+    "easy": 64,
+    "medium": 63,
+    "hard": 70,
+    "adversarial": 25
+  },
+  "topic_counts": {
+    "medical-segmentation-foundation-models": 66,
+    "transformer-attention-vision-representation": 56,
+    "rag-embedding-retrieval-reranking": 57,
+    "llm-reasoning-agents-evaluation": 43
+  },
+  "document_answerable_coverage": {
+    "agent-001": 8,
+    "agent-002": 6,
+    "agent-003": 6,
+    "agent-004": 6,
+    "agent-005": 6,
+    "agent-006": 6,
+    "agent-007": 6,
+    "agent-008": 7,
+    "med-001": 10,
+    "med-002": 9,
+    "med-003": 9,
+    "med-004": 8,
+    "med-005": 9,
+    "med-006": 8,
+    "med-007": 7,
+    "med-008": 7,
+    "rag-001": 8,
+    "rag-002": 7,
+    "rag-003": 7,
+    "rag-004": 7,
+    "rag-005": 7,
+    "rag-006": 7,
+    "rag-007": 8,
+    "rag-008": 7,
+    "vision-001": 7,
+    "vision-002": 7,
+    "vision-003": 7,
+    "vision-004": 7,
+    "vision-005": 7,
+    "vision-006": 7,
+    "vision-007": 7,
+    "vision-008": 7
+  },
+  "split_counts": {
+    "dev": 126,
+    "test": 96
+  },
+  "split_sha256": {
+    "golden-set-all.jsonl": "f0981e7d8fb7a832bbb0b5e79ee24b7bdc17e5021648916cd5059467073f5501",
+    "golden-set-dev.jsonl": "37aa6546b055c1d0505cba580026a2e7ee93c65a9fb6e5269c29da0bd3d3d049",
+    "golden-set-test.jsonl": "a5b76ed08ae2cdb21403a3f9678587a6c68cda0e801488cc53b0972d259b211d"
+  }
+}

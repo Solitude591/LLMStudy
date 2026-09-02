@@ -3,6 +3,7 @@ package com.llmstudy.rag.module.rag.aggregation;
 import com.llmstudy.rag.config.RetrievalProperties;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
 import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
+import com.llmstudy.rag.module.rag.query.QueryPageHint;
 import com.llmstudy.rag.module.rag.rerank.BgeCandidateReranker;
 import com.llmstudy.rag.module.rag.rerank.CandidateReranker;
 import com.llmstudy.rag.module.rag.rerank.RerankResult;
@@ -43,11 +44,17 @@ public class RrfRerankAggregator {
      */
     public RankedEvidence aggregate(RetrievalQueryPlan plan,
                                     HybridRetriever.RetrievalResult result) {
-        List<RetrievalCandidate> rrf = fusion.fuse(
-                result.successful(),
-                properties.getFusionCandidateCount(),
-                properties.getRrfK());
+        long groupingStarted = System.nanoTime();
+        var hintedPages = QueryPageHint.pages(plan.originalQuestion());
+        int fusionCount = properties.getFusionCandidateCount();
+        if (!hintedPages.isEmpty()) {
+            fusionCount = Math.max(fusionCount, QueryPageHint.FUSION_CANDIDATE_COUNT);
+        }
+        List<RetrievalCandidate> rrf = QueryPageHint.promote(
+                fusion.fuse(result.successful(), fusionCount, properties.getRrfK()),
+                hintedPages);
         List<RetrievalCandidate> grouped = group(rrf, properties.getRerankCandidateCount());
+        long rrfParentGroupingElapsedMs = elapsedMs(groupingStarted);
         String bgeQuery = BgeCandidateReranker.diagnose(plan);
         RerankResult reranked = reranker.rerank(plan, grouped);
         List<RetrievalCandidate> afterBge = reranked.candidates();
@@ -61,8 +68,10 @@ public class RrfRerankAggregator {
                             candidate.rrfScore() == null ? 0.0 : candidate.rrfScore()))
                     .toList();
         }
+        ranked = QueryPageHint.promote(ranked, hintedPages);
         return new RankedEvidence(rrf, grouped, afterBge, ranked,
-                reranked.used(), reranked.reason(), reranked.elapsedMs(), bgeQuery);
+                reranked.used(), reranked.reason(), reranked.elapsedMs(), bgeQuery,
+                rrfParentGroupingElapsedMs);
     }
 
     /**
@@ -131,12 +140,17 @@ public class RrfRerankAggregator {
                                  boolean bgeUsed,
                                  String bgeReason,
                                  long bgeElapsedMs,
-                                 String bgeQuery) {
+                                 String bgeQuery,
+                                 long rrfParentGroupingElapsedMs) {
         public RankedEvidence {
             rrf = List.copyOf(rrf);
             grouped = List.copyOf(grouped);
             afterBge = List.copyOf(afterBge);
             ranked = List.copyOf(ranked);
         }
+    }
+
+    private static long elapsedMs(long startedNanos) {
+        return (System.nanoTime() - startedNanos) / 1_000_000;
     }
 }

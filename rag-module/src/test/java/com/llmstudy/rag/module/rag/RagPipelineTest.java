@@ -281,7 +281,7 @@ class RagPipelineTest {
             List<RetrievalCandidate> candidates) {
         return new RrfRerankAggregator.RankedEvidence(
                 candidates, candidates, candidates, candidates,
-                false, "too-few-candidates", 0, "query");
+                false, "too-few-candidates", 0, "query", 0);
     }
 
     private static RetrievalCandidate documentCandidate(String id, String docId) {

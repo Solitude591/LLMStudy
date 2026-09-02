@@ -8,6 +8,7 @@ import json
 import os
 import statistics
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -63,50 +64,54 @@ def _value(result) -> float | None:
     return float(value)
 
 
-async def _score_one(name: str, coro) -> tuple[str, float | None, str | None]:
-    try:
-        return name, _value(await coro), None
-    except Exception as exc:
-        return name, None, str(exc)
+async def _score_one(name: str, factory, retries: int) -> tuple[str, float | None, str | None]:
+    last_error: Exception | None = None
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            return name, _value(await factory()), None
+        except Exception as exc:
+            last_error = exc
+            if attempt < max(1, retries):
+                await asyncio.sleep(min(2 ** (attempt - 1), 4))
+    assert last_error is not None
+    return name, None, str(last_error)
 
 
-async def score_row(row: dict, scorers: dict) -> dict[str, float | None]:
+async def score_row(
+    row: dict,
+    scorers: dict,
+    existing: dict[str, float | None] | None = None,
+    retries: int = 3,
+) -> dict[str, float | None]:
     user_input = row["user_input"]
     response = row["response"]
     reference = row["reference"]
     contexts = [str(c) for c in row["retrieved_contexts"] if str(c).strip()]
 
-    results = await asyncio.gather(
-        _score_one(
-            "Context Precision",
-            scorers["context_precision"].ascore(
-                user_input=user_input, reference=reference, retrieved_contexts=contexts
-            ),
+    factories = {
+        "Context Precision": lambda: scorers["context_precision"].ascore(
+            user_input=user_input, reference=reference, retrieved_contexts=contexts
         ),
-        _score_one(
-            "Context Recall",
-            scorers["context_recall"].ascore(
-                user_input=user_input, reference=reference, retrieved_contexts=contexts
-            ),
+        "Context Recall": lambda: scorers["context_recall"].ascore(
+            user_input=user_input, reference=reference, retrieved_contexts=contexts
         ),
-        _score_one(
-            "Answer Relevancy",
-            scorers["answer_relevancy"].ascore(user_input=user_input, response=response),
+        "Answer Relevancy": lambda: scorers["answer_relevancy"].ascore(
+            user_input=user_input, response=response
         ),
-        _score_one(
-            "Faithfulness",
-            scorers["faithfulness"].ascore(
-                user_input=user_input, response=response, retrieved_contexts=contexts
-            ),
+        "Faithfulness": lambda: scorers["faithfulness"].ascore(
+            user_input=user_input, response=response, retrieved_contexts=contexts
         ),
-        _score_one(
-            "Answer Correctness",
-            scorers["answer_correctness"].ascore(
-                user_input=user_input, response=response, reference=reference
-            ),
+        "Answer Correctness": lambda: scorers["answer_correctness"].ascore(
+            user_input=user_input, response=response, reference=reference
         ),
-    )
-    scores: dict[str, float | None] = {}
+    }
+    scores: dict[str, float | None] = {
+        name: (existing or {}).get(name) for name in METRICS
+    }
+    pending = [name for name in METRICS if scores[name] is None]
+    results = await asyncio.gather(*(
+        _score_one(name, factories[name], retries) for name in pending
+    ))
     for name, value, error in results:
         scores[name] = value
         if error:
@@ -119,7 +124,31 @@ def mean(values: list[float | None]) -> float | None:
     return statistics.mean(nums) if nums else None
 
 
-async def run(rows: list[dict], output: Path) -> None:
+def result_payload(items: list[dict]) -> dict:
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for item in items:
+        grouped[str(item.get("primary_category") or "unknown")].append(item)
+    return {
+        "mean": {name: mean([item.get(name) for item in items]) for name in METRICS},
+        "by_primary_category": {
+            category: {
+                "count": len(rows),
+                **{name: mean([row.get(name) for row in rows]) for name in METRICS},
+            }
+            for category, rows in sorted(grouped.items())
+        },
+        "metric_completion": {
+            name: {
+                "success": sum(item.get(name) is not None for item in items),
+                "failure": sum(item.get(name) is None for item in items),
+            }
+            for name in METRICS
+        },
+        "items": items,
+    }
+
+
+async def run(rows: list[dict], output: Path, retries: int = 3) -> None:
     # LLM（DeepSeek 等）与 embedding（DashScope text-embedding-v4）分 client，避免共用 BASE_URL。
     llm_client = AsyncOpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),
@@ -150,24 +179,55 @@ async def run(rows: list[dict], output: Path) -> None:
         "answer_correctness": AnswerCorrectness(llm=eval_llm, embeddings=embeddings),
     }
 
-    items: list[dict] = []
+    existing_items: dict[str, dict] = {}
+    if output.is_file():
+        try:
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            for item in payload.get("items", []):
+                key = str(item.get("question_id") or item.get("user_input") or "")
+                if key:
+                    existing_items[key] = item
+        except (json.JSONDecodeError, OSError, AttributeError):
+            existing_items = {}
+    items_by_key: dict[str, dict] = dict(existing_items)
     output.parent.mkdir(parents=True, exist_ok=True)
     for i, row in enumerate(rows, start=1):
         query = row["user_input"]
+        key = str(row.get("question_id") or query)
         print(f"[{i}/{len(rows)}] {query[:60]}{'...' if len(query) > 60 else ''}")
-        scores = await score_row(row, scorers)
+        previous = items_by_key.get(key, {})
+        if all(previous.get(name) is not None for name in METRICS):
+            print("  resume: all five metrics already scored")
+            continue
+        scores = await score_row(row, scorers, previous, retries)
         for name in METRICS:
             print(f"  {name}={scores[name]}")
-        items.append({"user_input": query, **scores})
-        payload = {
-            "mean": {name: mean([item[name] for item in items]) for name in METRICS},
-            "items": items,
+        items_by_key[key] = {
+            "question_id": row.get("question_id"),
+            "primary_category": row.get("primary_category"),
+            "user_input": query,
+            **scores,
         }
+        items = [
+            items_by_key[str(source.get("question_id") or source["user_input"])]
+            for source in rows
+            if str(source.get("question_id") or source["user_input"]) in items_by_key
+        ]
+        payload = result_payload(items)
         output.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
 
+    items = [
+        items_by_key[str(source.get("question_id") or source["user_input"])]
+        for source in rows
+        if str(source.get("question_id") or source["user_input"]) in items_by_key
+    ]
+    output.write_text(
+        json.dumps(result_payload(items), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     print("\n均值")
     for name in METRICS:
         print(f"  {name}={mean([item[name] for item in items])}")
@@ -192,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         help="scores.json；默认写到与 --input 同目录",
     )
     parser.add_argument("--limit", type=int, default=0, help="只评前 N 条，0 表示全部")
+    parser.add_argument("--retries", type=int, default=3, help="单指标暂时性失败最大尝试次数")
     args = parser.parse_args(argv)
 
     migrated = migrate_legacy_flat_files()
@@ -221,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         rows = rows[: args.limit]
     print(f"评测 {len(rows)} 条 -> {input_path}")
     print(f"分数写出 -> {output_path}")
-    asyncio.run(run(rows, output_path))
+    asyncio.run(run(rows, output_path, retries=args.retries))
     return 0
 
 

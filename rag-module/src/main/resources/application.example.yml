@@ -100,6 +100,7 @@ vision:
 
 mineru:
   token: ${MINERU_TOKEN}
+  max-wait-seconds: ${MINERU_MAX_WAIT_SECONDS:600}
 
 rag:
   llm-log:
@@ -124,7 +125,7 @@ rag:
     # 补偿任务 cron 表达式，每 5 分钟扫描一次失败/卡死文档
     cron: "0 */5 * * * ?"
     # 单个文档最大自动重试次数，超过后停止自动补偿，等待人工处理
-    max-retry-count: 3
+    max-retry-count: ${RAG_COMPENSATION_MAX_RETRY_COUNT:3}
     # 单轮最多补偿的文档数，防止一次性拉起大量失败文档
     batch-size: 10
     # 失败后的冷却时间，避免与原处理流程竞争
@@ -156,11 +157,11 @@ rag:
     min-score: ${BGE_RERANKER_MIN_SCORE:0.6}
 
   retrieval:
-    per-query-top-k: 10
-    fusion-candidate-count: 40
-    rerank-candidate-count: 20
-    top-n: 5
-    rrf-k: 60
+    per-query-top-k: ${RAG_RETRIEVAL_PER_QUERY_TOP_K:10}
+    fusion-candidate-count: ${RAG_RETRIEVAL_FUSION_CANDIDATE_COUNT:40}
+    rerank-candidate-count: ${RAG_RETRIEVAL_RERANK_CANDIDATE_COUNT:20}
+    top-n: ${RAG_RETRIEVAL_TOP_N:5}
+    rrf-k: ${RAG_RETRIEVAL_RRF_K:60}
     bge-rank-weight: 0.85
     retrieval-rerank-weight: 0.15
 

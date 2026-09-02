@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import sys
+import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -24,7 +27,7 @@ DEFAULT_INPUT = (
     / "rag-module"
     / "doc"
     / "test"
-    / "medical-image-segmentation-ragas-qa.jsonl"
+    / "golden-set-dev.jsonl"
 )
 
 # 直连 rag-module；urllib 默认会走 macOS 系统代理，localhost 常被打成 502。
@@ -59,10 +62,11 @@ def _api_post(url: str, body: dict, timeout: float = 300.0) -> dict:
     return data
 
 
-def generate(base_url: str, query: str) -> dict:
+def generate(base_url: str, query: str, timeout: float = 300.0) -> dict:
     data = _api_post(
         f"{base_url.rstrip('/')}/dataset/generate",
         {"query": query},
+        timeout=timeout,
     )
     response = data.get("response")
     chunks = data.get("chunks")
@@ -96,6 +100,130 @@ def load_jsonl(path: Path) -> list[dict]:
     return rows
 
 
+def _row_key(row: dict, index: int = 0) -> str:
+    value = row.get("question_id") or row.get("user_input")
+    return str(value) if value else f"row-{index:04d}"
+
+
+def _generate_with_retry(
+    base_url: str,
+    row: dict,
+    index: int,
+    timeout: float,
+    retries: int,
+) -> tuple[dict | None, dict]:
+    key = _row_key(row, index)
+    attempt_latencies: list[float] = []
+    total_started = time.perf_counter_ns()
+    last_error: Exception | None = None
+    for attempt in range(1, max(1, retries) + 1):
+        started = time.perf_counter_ns()
+        try:
+            generated = generate(base_url, row["user_input"].strip(), timeout=timeout)
+            attempt_latencies.append((time.perf_counter_ns() - started) / 1_000_000)
+            total_ms = (time.perf_counter_ns() - total_started) / 1_000_000
+            merged = {
+                **row,
+                "response": generated["response"],
+                "retrieved_contexts": generated["retrieved_contexts"],
+                "dataset_api_latency_ms": total_ms,
+                "generation_retry_count": attempt - 1,
+            }
+            return merged, {
+                "question_id": key,
+                "success": True,
+                "timeout": False,
+                "retry_count": attempt - 1,
+                "attempt_latency_ms": attempt_latencies,
+                "stages_ms": {"dataset_api": total_ms},
+            }
+        except Exception as exc:
+            attempt_latencies.append((time.perf_counter_ns() - started) / 1_000_000)
+            last_error = exc
+            if attempt < max(1, retries):
+                time.sleep(min(2 ** (attempt - 1), 4))
+    assert last_error is not None
+    total_ms = (time.perf_counter_ns() - total_started) / 1_000_000
+    timed_out = isinstance(last_error, (TimeoutError, socket.timeout)) or "timed out" in str(last_error).casefold()
+    return None, {
+        "question_id": key,
+        "success": False,
+        "timeout": timed_out,
+        "retry_count": max(1, retries) - 1,
+        "attempt_latency_ms": attempt_latencies,
+        "stages_ms": {"dataset_api": total_ms},
+        "error": str(last_error),
+    }
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as stream:
+        for row in rows:
+            stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def run_generation(
+    rows: list[dict],
+    output: Path,
+    base_url: str,
+    warmup: int = 0,
+    concurrency: int = 1,
+    timeout: float = 300.0,
+    retries: int = 3,
+    resume: bool = True,
+) -> tuple[list[dict], list[dict]]:
+    existing: dict[str, dict] = {}
+    if resume and output.is_file():
+        for index, row in enumerate(load_jsonl(output), start=1):
+            if row.get("response") is not None and isinstance(row.get("retrieved_contexts"), list):
+                existing[_row_key(row, index)] = row
+
+    pending = [
+        (index, row)
+        for index, row in enumerate(rows, start=1)
+        if _row_key(row, index) not in existing
+    ]
+    if rows and warmup > 0:
+        print(f"warmup={warmup} (excluded from percentiles)")
+        for _ in range(warmup):
+            generate(base_url, rows[0]["user_input"].strip(), timeout=timeout)
+
+    generated_by_key = dict(existing)
+    latency_details: list[dict] = []
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+        futures = {
+            executor.submit(
+                _generate_with_retry, base_url, row, index, timeout, retries
+            ): (index, row)
+            for index, row in pending
+        }
+        for future in as_completed(futures):
+            index, row = futures[future]
+            generated, latency = future.result()
+            latency_details.append(latency)
+            if generated is not None:
+                generated_by_key[_row_key(row, index)] = generated
+            print(
+                f"[{len(latency_details)}/{len(pending)}] {_row_key(row, index)} "
+                f"success={latency['success']} retries={latency['retry_count']}"
+            )
+            ordered_partial = [
+                generated_by_key[_row_key(source, source_index)]
+                for source_index, source in enumerate(rows, start=1)
+                if _row_key(source, source_index) in generated_by_key
+            ]
+            _write_jsonl(output, ordered_partial)
+
+    ordered = [
+        generated_by_key[_row_key(row, index)]
+        for index, row in enumerate(rows, start=1)
+        if _row_key(row, index) in generated_by_key
+    ]
+    _write_jsonl(output, ordered)
+    return ordered, sorted(latency_details, key=lambda item: item["question_id"])
+
+
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
 
@@ -115,6 +243,11 @@ def main(argv: list[str] | None = None) -> int:
         help="rag-module 服务地址",
     )
     parser.add_argument("--limit", type=int, default=0, help="只处理前 N 条，0 表示全部")
+    parser.add_argument("--warmup", type=int, default=0, help="预热请求数，不计入延迟分位数")
+    parser.add_argument("--concurrency", type=int, default=1, help="低并发生成，默认串行")
+    parser.add_argument("--timeout", type=float, default=300.0, help="单次 API 超时（秒）")
+    parser.add_argument("--retries", type=int, default=3, help="暂时性失败最大尝试次数")
+    parser.add_argument("--no-resume", action="store_true", help="不复用现有成功记录")
     args = parser.parse_args(argv)
 
     if not args.input.is_file():
@@ -140,28 +273,25 @@ def main(argv: list[str] | None = None) -> int:
     print(f"调用 {args.base_url.rstrip('/')}/dataset/generate")
     print(f"写出 -> {args.output}")
 
-    with args.output.open("w", encoding="utf-8") as out:
-        for i, row in enumerate(rows, start=1):
-            query = row["user_input"].strip()
-            print(f"[{i}/{len(rows)}] {query[:60]}{'...' if len(query) > 60 else ''}")
-            try:
-                generated = generate(args.base_url, query)
-            except Exception as exc:
-                print(f"  失败: {exc}", file=sys.stderr)
-                return 1
+    generated, latency_details = run_generation(
+        rows,
+        args.output,
+        args.base_url,
+        warmup=args.warmup,
+        concurrency=args.concurrency,
+        timeout=args.timeout,
+        retries=args.retries,
+        resume=not args.no_resume,
+    )
+    latency_path = args.output.with_name("generation-latency-details.jsonl")
+    _write_jsonl(latency_path, latency_details)
+    failures = [row for row in latency_details if not row["success"]]
+    if failures:
+        _write_jsonl(args.output.with_name("generation-failures.jsonl"), failures)
 
-            merged = {
-                **row,
-                "response": generated["response"],
-                "retrieved_contexts": generated["retrieved_contexts"],
-            }
-            out.write(json.dumps(merged, ensure_ascii=False) + "\n")
-            out.flush()
-            print(f"  ok: contexts={len(generated['retrieved_contexts'])}")
-
-    print("完成")
+    print(f"完成: success={len(generated)} failure={len(failures)}")
     print(f"评测请指定: --input {args.output}")
-    return 0
+    return 0 if not failures else 1
 
 
 if __name__ == "__main__":

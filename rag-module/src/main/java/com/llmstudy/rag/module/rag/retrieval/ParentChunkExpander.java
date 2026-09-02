@@ -94,12 +94,18 @@ public class ParentChunkExpander {
         if (parent.getDocId() != null && !merged.containsKey(SegmentMetadataKeys.DOC_ID)) {
             merged.put(SegmentMetadataKeys.DOC_ID, parent.getDocId());
         }
-        // 章节与页码改用 parent 全章范围。
+        // 章节与页码改用 parent 全章范围；parent 缺页码时保留 child，避免诊断无法计分。
         SegmentMetadataMaps.copyString(parentMetadata, merged, SegmentMetadataKeys.HEADER_PATH);
         SegmentMetadataMaps.copyPositiveInt(
                 parentMetadata, merged, SegmentMetadataKeys.PAGE_START);
         SegmentMetadataMaps.copyPositiveInt(
                 parentMetadata, merged, SegmentMetadataKeys.PAGE_END);
+        if (!merged.containsKey(SegmentMetadataKeys.PAGE_START)) {
+            SegmentMetadataMaps.copyPositiveInt(
+                    metadata, merged, SegmentMetadataKeys.PAGE_START);
+            SegmentMetadataMaps.copyPositiveInt(
+                    metadata, merged, SegmentMetadataKeys.PAGE_END);
+        }
         return candidate.withIdentity(parent.getChunkId(), parent.getText(), merged);
     }
 }

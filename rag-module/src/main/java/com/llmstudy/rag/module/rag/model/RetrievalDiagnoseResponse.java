@@ -25,6 +25,7 @@ public record RetrievalDiagnoseResponse(
         String bgeReason,
         long bgeElapsedMs,
         String bgeQuery,
+        StageTimings timings,
         List<String> failures) {
 
     public RetrievalDiagnoseResponse {
@@ -53,8 +54,20 @@ public record RetrievalDiagnoseResponse(
      *
      * <p>raw / RRF / BGE / final 使用独立字段；某阶段尚未计算的分数为 null。</p>
      */
-    public record Hit(String id, String groupId, Double rawScore, Double rrfScore,
+    public record Hit(String id, String groupId, String docId, String versionId,
+                      String chunkId, String headerPath, String sourceUrl,
+                      Integer pageStart, Integer pageEnd,
+                      Double rawScore, Double rrfScore,
                       Double bgeScore, Double finalScore, int rank, String text) {
+    }
+
+    /** 基于 {@code System.nanoTime()} 采集的检索阶段墙钟耗时。 */
+    public record StageTimings(long queryRewriteMs,
+                               long parallelRecallMs,
+                               long rrfParentGroupingMs,
+                               long bgeRerankMs,
+                               long parentExpandSelectionMs,
+                               long totalRetrievalMs) {
     }
 
     /** parent 展开或补位时的 child → 输出关系。 */

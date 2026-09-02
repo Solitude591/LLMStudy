@@ -107,6 +107,21 @@ class HybridRetrieverTest {
     }
 
     @Test
+    void pageHintExpandsBothLaneBudgets() throws Exception {
+        RetrievalQueryPlan plan = new RetrievalQueryPlan(
+                "《U-Net》第 2 页的跳连如何描述？", "U-Net 第 2 页", "U-Net page 2");
+        Bm25Retriever bm25 = mock(Bm25Retriever.class);
+        KnnRetriever knn = mock(KnnRetriever.class);
+        when(bm25.retrieve(plan, null, 40)).thenReturn(List.of());
+        when(knn.retrieve(plan, null, 40)).thenReturn(List.of());
+
+        new HybridRetriever(bm25, knn, new RetrievalProperties()).retrieve(plan);
+
+        verify(bm25).retrieve(plan, null, 40);
+        verify(knn).retrieve(plan, null, 40);
+    }
+
+    @Test
     void bm25AndKnnRunConcurrently() throws Exception {
         Bm25Retriever bm25 = mock(Bm25Retriever.class);
         KnnRetriever knn = mock(KnnRetriever.class);

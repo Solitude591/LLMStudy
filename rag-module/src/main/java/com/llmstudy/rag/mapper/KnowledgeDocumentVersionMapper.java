@@ -5,7 +5,7 @@ import com.llmstudy.rag.enums.DocumentReleaseStatus;
 import com.llmstudy.rag.enums.DocumentStatus;
 import org.apache.ibatis.annotations.*;
 
-import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -359,7 +359,7 @@ public interface KnowledgeDocumentVersionMapper {
             </foreach>
               AND error_message IS NOT NULL
               AND retry_count &lt; #{maxRetryCount}
-              AND updated_at &lt; #{before}
+              AND updated_at &lt; DATE_SUB(NOW(), INTERVAL #{retryDelaySeconds} SECOND)
             ORDER BY updated_at ASC
             LIMIT #{batchSize}
             </script>
@@ -367,16 +367,16 @@ public interface KnowledgeDocumentVersionMapper {
     List<KnowledgeDocumentVersion> findFailedForCompensationValue(
             @Param("statuses") List<String> statuses,
             @Param("maxRetryCount") int maxRetryCount,
-            @Param("before") LocalDateTime before,
+            @Param("retryDelaySeconds") long retryDelaySeconds,
             @Param("batchSize") int batchSize);
 
     default List<KnowledgeDocumentVersion> findFailedForCompensation(
-            int maxRetryCount, LocalDateTime before, int batchSize) {
+            int maxRetryCount, Duration retryDelay, int batchSize) {
         return findFailedForCompensationValue(
                 List.of(DocumentStatus.UPLOADED.value(),
                         DocumentStatus.CONVERTED.value(),
                         DocumentStatus.CHUNKED.value()),
-                maxRetryCount, before, batchSize);
+                maxRetryCount, Math.max(1, retryDelay.toSeconds()), batchSize);
     }
 
     /**
@@ -396,7 +396,7 @@ public interface KnowledgeDocumentVersionMapper {
               AND release_status = 'PREPARING'
               AND error_message IS NULL
               AND retry_count &lt; #{maxRetryCount}
-              AND updated_at &lt; #{deadline}
+              AND updated_at &lt; DATE_SUB(NOW(), INTERVAL #{staleTimeoutSeconds} SECOND)
             ORDER BY updated_at ASC
             LIMIT #{batchSize}
             </script>
@@ -404,16 +404,16 @@ public interface KnowledgeDocumentVersionMapper {
     List<KnowledgeDocumentVersion> findStalledStableValue(
             @Param("statuses") List<String> statuses,
             @Param("maxRetryCount") int maxRetryCount,
-            @Param("deadline") LocalDateTime deadline,
+            @Param("staleTimeoutSeconds") long staleTimeoutSeconds,
             @Param("batchSize") int batchSize);
 
     default List<KnowledgeDocumentVersion> findStalledStable(
-            int maxRetryCount, LocalDateTime deadline, int batchSize) {
+            int maxRetryCount, Duration staleTimeout, int batchSize) {
         return findStalledStableValue(
                 List.of(DocumentStatus.UPLOADED.value(),
                         DocumentStatus.CONVERTED.value(),
                         DocumentStatus.CHUNKED.value()),
-                maxRetryCount, deadline, batchSize);
+                maxRetryCount, Math.max(1, staleTimeout.toSeconds()), batchSize);
     }
 
     /**
@@ -430,22 +430,22 @@ public interface KnowledgeDocumentVersionMapper {
             <foreach collection='statuses' item='s' open='(' separator=',' close=')'>
                 #{s}
             </foreach>
-              AND updated_at &lt; #{deadline}
+              AND updated_at &lt; DATE_SUB(NOW(), INTERVAL #{staleTimeoutSeconds} SECOND)
             ORDER BY updated_at ASC
             LIMIT #{batchSize}
             </script>
             """)
     List<KnowledgeDocumentVersion> findStaleIntermediateValue(
             @Param("statuses") List<String> statuses,
-            @Param("deadline") LocalDateTime deadline,
+            @Param("staleTimeoutSeconds") long staleTimeoutSeconds,
             @Param("batchSize") int batchSize);
 
     default List<KnowledgeDocumentVersion> findStaleIntermediate(
-            LocalDateTime deadline, int batchSize) {
+            Duration staleTimeout, int batchSize) {
         return findStaleIntermediateValue(
                 List.of(DocumentStatus.CONVERTING.value(),
                         DocumentStatus.SPLITTING.value(),
                         DocumentStatus.VECTORING.value()),
-                deadline, batchSize);
+                Math.max(1, staleTimeout.toSeconds()), batchSize);
     }
 }

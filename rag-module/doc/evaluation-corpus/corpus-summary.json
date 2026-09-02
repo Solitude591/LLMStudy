@@ -1,0 +1,11 @@
+{
+  "count": 32,
+  "valid": 32,
+  "invalid": 0,
+  "topics": {
+    "medical-segmentation-foundation-models": 8,
+    "transformer-attention-vision-representation": 8,
+    "rag-embedding-retrieval-reranking": 8,
+    "llm-reasoning-agents-evaluation": 8
+  }
+}

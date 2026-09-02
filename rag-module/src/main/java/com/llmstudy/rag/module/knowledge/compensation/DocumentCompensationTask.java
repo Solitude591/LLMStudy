@@ -9,11 +9,13 @@ import com.llmstudy.rag.module.knowledge.ingestion.event.DocumentSplitEvent;
 import com.llmstudy.rag.module.knowledge.ingestion.event.DocumentUploadedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -62,14 +64,25 @@ public class DocumentCompensationTask {
     public void compensate() {
         compensateFailedVersions();
         recoverStalledStableVersions();
-        recoverStaleVersions();
+        recoverStaleVersions(properties.getStaleTimeout());
+    }
+
+    /**
+     * 进程重启后，上一轮留在 converting/splitting/vectoring 的版本已经没有工作线程。
+     * 立即按失败稳定态和短超时中间态回收，避免再等完整 stale-timeout。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void recoverAfterRestart() {
+        log.info("应用启动后回收失败与中间态版本");
+        compensateFailedVersions();
+        recoverStalledStableVersions();
+        recoverStaleVersions(Duration.ofSeconds(5));
     }
 
     /** 补偿带错误信息、停留稳定态的失败版本。 */
     private void compensateFailedVersions() {
-        LocalDateTime before = LocalDateTime.now().minus(properties.getRetryDelay());
         List<KnowledgeDocumentVersion> failed = versionMapper.findFailedForCompensation(
-                properties.getMaxRetryCount(), before, properties.getBatchSize());
+                properties.getMaxRetryCount(), properties.getRetryDelay(), properties.getBatchSize());
         if (failed.isEmpty()) {
             return;
         }
@@ -97,9 +110,8 @@ public class DocumentCompensationTask {
      * 恢复数据库已提交、但本地事件可能因进程退出而丢失的稳定态版本。
      */
     private void recoverStalledStableVersions() {
-        LocalDateTime deadline = LocalDateTime.now().minus(properties.getStaleTimeout());
         List<KnowledgeDocumentVersion> stalled = versionMapper.findStalledStable(
-                properties.getMaxRetryCount(), deadline, properties.getBatchSize());
+                properties.getMaxRetryCount(), properties.getStaleTimeout(), properties.getBatchSize());
         for (KnowledgeDocumentVersion version : stalled) {
             String versionId = version.getVersionId();
             DocumentStatus status = version.getDocumentStatus();
@@ -113,10 +125,9 @@ public class DocumentCompensationTask {
     }
 
     /** 回退卡死在执行中间态的版本，再重新触发对应阶段。 */
-    private void recoverStaleVersions() {
-        LocalDateTime deadline = LocalDateTime.now().minus(properties.getStaleTimeout());
+    private void recoverStaleVersions(Duration staleTimeout) {
         List<KnowledgeDocumentVersion> stale = versionMapper.findStaleIntermediate(
-                deadline, properties.getBatchSize());
+                staleTimeout, properties.getBatchSize());
         if (stale.isEmpty()) {
             return;
         }

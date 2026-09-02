@@ -98,11 +98,14 @@ public class ContentListPaperChunker {
             }
             if ("table".equals(type)) {
                 flushText(result, buffer, headers.path());
-                result.add(emitter.standalone(
-                        renderTable(element),
-                        headers.path(),
-                        pageOf(element),
-                        pageOf(element)));
+                String tableText = renderTable(element);
+                if (!tableText.isBlank()) {
+                    result.add(emitter.standalone(
+                            tableText,
+                            headers.path(),
+                            pageOf(element),
+                            pageOf(element)));
+                }
                 continue;
             }
             if (ATOMIC_TYPES.contains(type)) {
@@ -197,13 +200,19 @@ public class ContentListPaperChunker {
                 text.append('\n');
             }
             appendImageNode(text, element, caption);
+        } else if (element.getText() != null && !element.getText().isBlank()) {
+            if (!text.isEmpty()) {
+                text.append('\n');
+            }
+            text.append(element.getText().strip());
         }
 
         appendLines(text, "脚注: ", element.getTableFootnote());
 
         String rendered = text.toString().strip();
         if (rendered.isBlank()) {
-            throw new IllegalStateException("表格元素缺少 table_body、图片与表题");
+            log.warn("跳过残缺表格元素: pageIdx={}", element.getPageIdx());
+            return "";
         }
         return rendered;
     }

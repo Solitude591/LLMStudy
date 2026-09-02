@@ -14,6 +14,7 @@ import com.llmstudy.rag.module.rag.model.RetrievalDiagnoseResponse.Expand;
 import com.llmstudy.rag.module.rag.model.RetrievalDiagnoseResponse.Hit;
 import com.llmstudy.rag.module.rag.model.RetrievalDiagnoseResponse.Lane;
 import com.llmstudy.rag.module.rag.model.RetrievalDiagnoseResponse.QueryPlan;
+import com.llmstudy.rag.module.rag.model.RetrievalDiagnoseResponse.StageTimings;
 import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
 import com.llmstudy.rag.module.rag.prompt.RagPromptInjector;
 import com.llmstudy.rag.module.rag.query.QueryRewriter;
@@ -134,6 +135,7 @@ public class RagPipeline {
                     steps.ranked.bgeReason(),
                     steps.ranked.bgeElapsedMs(),
                     steps.ranked.bgeQuery(),
+                    steps.timings,
                     failures);
         }
     }
@@ -146,20 +148,34 @@ public class RagPipeline {
      */
     private Steps run(RagRequest request, Consumer<RagProgressStage> progress) {
         Objects.requireNonNull(progress, "progress");
+        long totalStarted = System.nanoTime();
         progress.accept(RagProgressStage.QUESTION_ANALYSIS);
+        long rewriteStarted = System.nanoTime();
         RetrievalQueryPlan plan = queryRewriter.rewrite(request);
+        long rewriteElapsedMs = elapsedMs(rewriteStarted);
 
         progress.accept(RagProgressStage.KNOWLEDGE_RETRIEVAL);
+        long recallStarted = System.nanoTime();
         HybridRetriever.RetrievalResult retrieval =
                 hybridRetriever.retrieve(plan, request.accessContext());
+        long recallElapsedMs = elapsedMs(recallStarted);
 
         progress.accept(RagProgressStage.EVIDENCE_ORGANIZATION);
         RrfRerankAggregator.RankedEvidence ranked = aggregator.aggregate(plan, retrieval);
         List<Expand> expand = new ArrayList<>();
         RetrievalQueryScope scope = RetrievalQueryScope.from(plan);
+        long selectionStarted = System.nanoTime();
         List<RetrievalCandidate> selected = backfill(
                 prioritizeFocusedDocuments(ranked.ranked(), scope), expand, scope);
-        return new Steps(plan, retrieval, ranked, List.copyOf(expand), selected);
+        long selectionElapsedMs = elapsedMs(selectionStarted);
+        StageTimings timings = new StageTimings(
+                rewriteElapsedMs,
+                recallElapsedMs,
+                ranked.rrfParentGroupingElapsedMs(),
+                ranked.bgeElapsedMs(),
+                selectionElapsedMs,
+                elapsedMs(totalStarted));
+        return new Steps(plan, retrieval, ranked, List.copyOf(expand), selected, timings);
     }
 
     /**
@@ -272,7 +288,15 @@ public class RagPipeline {
         List<Hit> hits = new ArrayList<>(list.size());
         for (int index = 0; index < list.size(); index++) {
             RetrievalCandidate candidate = list.get(index);
+            Map<String, Object> metadata = candidate.metadata();
             hits.add(new Hit(candidate.id(), candidate.groupingKey(),
+                    string(metadata.get(SegmentMetadataKeys.DOC_ID)),
+                    string(metadata.get(SegmentMetadataKeys.VERSION_ID)),
+                    candidate.id(),
+                    string(metadata.get(SegmentMetadataKeys.HEADER_PATH)),
+                    string(metadata.get(SegmentMetadataKeys.SOURCE_URL)),
+                    positiveInteger(metadata.get(SegmentMetadataKeys.PAGE_START)),
+                    positiveInteger(metadata.get(SegmentMetadataKeys.PAGE_END)),
                     candidate.rawScore(), candidate.rrfScore(),
                     candidate.bgeScore(), candidate.finalScore(),
                     index + 1, clip(candidate.text(), includeText)));
@@ -293,10 +317,32 @@ public class RagPipeline {
         return codePoints.length <= 300 ? text : new String(codePoints, 0, 300);
     }
 
+    private static String string(Object value) {
+        return value == null ? null : value.toString();
+    }
+
+    private static Integer positiveInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            int parsed = value instanceof Number number
+                    ? number.intValue() : Integer.parseInt(value.toString().trim());
+            return parsed > 0 ? parsed : null;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static long elapsedMs(long startedNanos) {
+        return (System.nanoTime() - startedNanos) / 1_000_000;
+    }
+
     private record Steps(RetrievalQueryPlan plan,
                          HybridRetriever.RetrievalResult retrieval,
                          RrfRerankAggregator.RankedEvidence ranked,
                          List<Expand> expand,
-                         List<RetrievalCandidate> selected) {
+                         List<RetrievalCandidate> selected,
+                         StageTimings timings) {
     }
 }

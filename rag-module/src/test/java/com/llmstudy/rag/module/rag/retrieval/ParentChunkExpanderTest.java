@@ -97,4 +97,28 @@ class ParentChunkExpanderTest {
         assertNull(new HashMap<>(expanded.getFirst().metadata())
                 .get(SegmentMetadataKeys.HEADER_PATH));
     }
+
+    @Test
+    void keepsChildPagesWhenParentMetadataOmitsPages() {
+        ParentChunkResolver resolver = mock(ParentChunkResolver.class);
+        KnowledgeSegment parent = new KnowledgeSegment();
+        parent.setChunkId("p-1");
+        parent.setText("parent");
+        parent.setMetadata("{}");
+        when(resolver.resolve(eq("p-1"), anyMap())).thenReturn(parent);
+
+        RetrievalCandidate child = new RetrievalCandidate(
+                "c-1", "child",
+                Map.of(SegmentMetadataKeys.PARENT_CHUNK_ID, "p-1",
+                        SegmentMetadataKeys.PAGE_START, 6,
+                        SegmentMetadataKeys.PAGE_END, 6),
+                0.5, null);
+
+        List<RetrievalCandidate> expanded = new ParentChunkExpander(
+                resolver, JsonMapper.builder().build())
+                .expand(List.of(child));
+
+        assertEquals(6, expanded.getFirst().metadata().get(SegmentMetadataKeys.PAGE_START));
+        assertEquals(6, expanded.getFirst().metadata().get(SegmentMetadataKeys.PAGE_END));
+    }
 }

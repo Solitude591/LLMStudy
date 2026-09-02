@@ -1,0 +1,66 @@
+{
+  "valid": true,
+  "question_count": 222,
+  "category_counts": {
+    "ambiguous": 25,
+    "cross_document": 35,
+    "cross_section": 35,
+    "fact": 70,
+    "table": 32,
+    "unanswerable": 25
+  },
+  "document_evidence_counts": {
+    "2015_MICCAI_U-Net.pdf": 12,
+    "2017_arXiv_Attention-Is-All-You-Need.pdf": 8,
+    "2018_MIDL_Attention-U-Net.pdf": 11,
+    "2020_Nature-Methods_nnU-Net.pdf": 11,
+    "2020_arXiv_ColBERT.pdf": 8,
+    "2020_arXiv_DETR.pdf": 8,
+    "2020_arXiv_DPR.pdf": 8,
+    "2020_arXiv_RAG.pdf": 9,
+    "2020_arXiv_REALM.pdf": 8,
+    "2020_arXiv_Vision-Transformer.pdf": 8,
+    "2021_arXiv_CLIP.pdf": 8,
+    "2021_arXiv_GSM8K.pdf": 7,
+    "2021_arXiv_Masked-Autoencoders.pdf": 8,
+    "2021_arXiv_Swin-Transformer.pdf": 8,
+    "2022_arXiv_Chain-of-Thought.pdf": 9,
+    "2022_arXiv_ConvNeXt.pdf": 8,
+    "2022_arXiv_HELM.pdf": 7,
+    "2022_arXiv_HyDE.pdf": 8,
+    "2022_arXiv_ReAct.pdf": 7,
+    "2022_arXiv_Self-Consistency.pdf": 8,
+    "2023_arXiv_DINOv2.pdf": 8,
+    "2023_arXiv_Judging-LLM-as-a-Judge.pdf": 7,
+    "2023_arXiv_Lost-in-the-Middle.pdf": 8,
+    "2023_arXiv_MedSAM.pdf": 8,
+    "2023_arXiv_RAGAS.pdf": 9,
+    "2023_arXiv_Reflexion.pdf": 7,
+    "2023_arXiv_SAM-Med2D.pdf": 8,
+    "2023_arXiv_Segment-Anything.pdf": 9,
+    "2023_arXiv_Toolformer.pdf": 7,
+    "2024_arXiv_BGE-M3.pdf": 8,
+    "2026_Cognitive-Computation_MDCL-UNet_双栏.pdf": 10,
+    "2026_MIDL_ECT-3DMedSAM_单栏.pdf": 9
+  },
+  "language_counts": {
+    "en": 80,
+    "mixed": 20,
+    "zh": 122
+  },
+  "topic_counts": {
+    "llm-reasoning-agents-evaluation": 43,
+    "medical-segmentation-foundation-models": 66,
+    "rag-embedding-retrieval-reranking": 57,
+    "transformer-attention-vision-representation": 56
+  },
+  "near_duplicate_pairs": [],
+  "errors": [],
+  "warnings": [],
+  "split_validation": {
+    "valid": true,
+    "dev_input": "../rag-module/doc/test/golden-set-dev.jsonl",
+    "test_input": "../rag-module/doc/test/golden-set-test.jsonl",
+    "errors": []
+  }
+}

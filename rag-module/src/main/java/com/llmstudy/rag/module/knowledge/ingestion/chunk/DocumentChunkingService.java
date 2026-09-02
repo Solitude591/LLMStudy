@@ -135,13 +135,18 @@ public class DocumentChunkingService {
     private SplitOutcome splitVersion(KnowledgeDocumentVersion version) {
         List<MineruContentElement> elements = tryLoadContentList(version);
         if (!elements.isEmpty()) {
-            List<KnowledgeChunk> chunks = contentListChunker.split(elements);
-            if (!chunks.isEmpty()) {
-                return new SplitOutcome(
-                        chunks, DocumentLanguageDetector.fromContentList(elements));
+            try {
+                List<KnowledgeChunk> chunks = contentListChunker.split(elements);
+                if (!chunks.isEmpty()) {
+                    return new SplitOutcome(
+                            chunks, DocumentLanguageDetector.fromContentList(elements));
+                }
+                log.warn("content_list 未产出分片，回退 Markdown: versionId={}",
+                        version.getVersionId());
+            } catch (RuntimeException e) {
+                log.warn("content_list 分片失败，回退 Markdown: versionId={}, cause={}",
+                        version.getVersionId(), e.toString());
             }
-            log.warn("content_list 未产出分片，回退 Markdown: versionId={}",
-                    version.getVersionId());
         }
         log.info("回退 Markdown AST 分片: versionId={}", version.getVersionId());
         String markdown = downloadText(version.getConvertedDocUrl());

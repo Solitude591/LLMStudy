@@ -8,6 +8,7 @@ import com.llmstudy.rag.module.knowledge.model.SegmentMetadataKeys;
 import com.llmstudy.rag.module.rag.model.RetrievalCandidate;
 import com.llmstudy.rag.module.rag.model.RetrievalQueryPlan;
 import com.llmstudy.rag.module.rag.query.DocumentMentionMatcher;
+import com.llmstudy.rag.module.rag.query.QueryPageHint;
 import com.llmstudy.rag.module.rag.query.RetrievalQueryScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -108,6 +109,9 @@ public class HybridRetriever {
                 ? Math.max(properties.getPerQueryTopK(),
                         properties.getComprehensivePerQueryTopK())
                 : properties.getPerQueryTopK();
+        if (!QueryPageHint.pages(plan.originalQuestion()).isEmpty()) {
+            requestedTopK = Math.max(requestedTopK, QueryPageHint.RECALL_TOP_K);
+        }
         int topK = Math.max(1, requestedTopK);
         List<String> targetVersions = mentionedVersions;
         RetrievalQueryPlan focusedPlan = targetVersions.size() < 2 ? plan

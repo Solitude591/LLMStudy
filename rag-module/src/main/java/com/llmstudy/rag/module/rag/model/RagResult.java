@@ -6,7 +6,13 @@ import java.util.List;
 
 /** 在线 RAG Pipeline 的最终输出。 */
 public record RagResult(LlmPrompt prompt, RetrievalQueryPlan queryPlan,
-                        List<RagReference> references, List<String> chunks) {
+                        List<RagReference> references, List<String> chunks,
+                        RetrievalDiagnoseResponse retrievalDiagnostics) {
+
+    public RagResult(LlmPrompt prompt, RetrievalQueryPlan queryPlan,
+                     List<RagReference> references, List<String> chunks) {
+        this(prompt, queryPlan, references, chunks, null);
+    }
 
     public RagResult {
         references = references == null ? List.of() : List.copyOf(references);

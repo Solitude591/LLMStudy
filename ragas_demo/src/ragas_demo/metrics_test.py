@@ -70,6 +70,50 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(result["overall"]["hit_rate@5"], 1.0)
         self.assertEqual(result["unanswerable"]["refusal_accuracy"], 1.0)
 
+    def test_missing_page_mixed_with_other_documents_is_unknown(self) -> None:
+        row = {"relevant_evidence": [{"document_id": "d", "page_start": 3}]}
+        scored = score_answerable(row, [{"docId": "other", "pageStart": 1, "pageEnd": 1},
+                                        {"docId": "d", "pageStart": None}], 5)
+        self.assertFalse(scored["scorable"])
+        self.assertIsNone(scored["hit"])
+        self.assertTrue(scored["all_documents_covered"])
+        self.assertEqual(scored["unknown_evidence_count"], 1)
+
+    def test_confirmed_hit_after_unknown_keeps_hit_but_not_exact_mrr(self) -> None:
+        row = {"is_answerable": True, "relevant_evidence": [
+            {"document_id": "d", "page_start": 3}]}
+        hits = [{"docId": "d"}, {"docId": "d", "pageStart": 3, "pageEnd": 3}]
+        scored = score_answerable(row, hits, 5)
+        self.assertTrue(scored["scorable"])
+        self.assertEqual(scored["hit"], 1)
+        self.assertEqual(scored["first_confirmed_rank"], 2)
+        self.assertIsNone(scored["reciprocal_rank"])
+        result = aggregate_retrieval([{**row, **scored}], 5)
+        self.assertEqual(result["overall"]["hit_rate@5"], 1)
+        self.assertEqual(result["overall"]["mrr_scorable_count"], 0)
+        self.assertIsNone(result["overall"]["mrr@5"])
+        self.assertEqual(score_answerable(row, list(reversed(hits)), 5)["reciprocal_rank"], 1)
+
+    def test_unrelated_missing_page_is_still_a_definite_miss(self) -> None:
+        row = {"relevant_evidence": [{"document_id": "d", "page_start": 3}]}
+        self.assertEqual(score_answerable(row, [{"docId": "other"}], 5)["hit"], 0)
+        self.assertEqual(score_answerable(row, [], 5)["hit"], 0)
+
+    def test_same_document_wrong_version_cannot_match(self) -> None:
+        self.assertFalse(match_evidence(
+            {"document_id": "d", "version_id": "v2", "page_start": 1},
+            {"docId": "d", "versionId": "v1", "pageStart": 1, "pageEnd": 1},
+        )[0])
+
+    def test_any_hit_is_not_all_required_documents_covered(self) -> None:
+        row = {"relevant_evidence": [
+            {"document_id": "d1", "page_start": 1},
+            {"document_id": "d2", "page_start": 2}]}
+        result = score_answerable(row, [{"docId": "d1", "pageStart": 1, "pageEnd": 1}], 5)
+        self.assertEqual(result["hit"], 1)
+        self.assertFalse(result["all_documents_covered"])
+        self.assertEqual(result["evidence_coverage_lower_bound"], 0.5)
+
     def test_percentiles_and_failures_are_retained(self) -> None:
         self.assertEqual(percentile([10, 20, 30, 40], 0.5), 25)
         result = latency_summary(

@@ -23,10 +23,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
 /**
- * 并行执行语言感知 BM25 与 KNN，共两路。
+ * 并行执行语言感知 BM25 与 KNN，再为每条扩展查询各补一路。
  *
- * <p>每路在单次 ES 请求内按文档语言选择中英文 query。
- * 单路失败记录后继续，两路都失败才抛异常。</p>
+ * <p>主两路在单次 ES 请求内按文档语言选择中英文 query。改写策略产出的扩展查询
+ * （同义改写 / 子问题 / HyDE 假设答案）以及用户原问题，各自作为独立通道参与 RRF：
+ * 被多条查询同时命中的片段会累加 {@code 1/(k+rank)}，从而在进 ReRanker 之前就排到前面。</p>
+ *
+ * <p>任意一路失败都只记录并继续，全部失败才抛异常；扩展路失败不影响主两路。</p>
  */
 @Component
 public class HybridRetriever {
@@ -89,15 +92,19 @@ public class HybridRetriever {
         if (currentVersionIds != null && currentVersionIds.isEmpty()) {
             return RetrievalResult.empty();
         }
-        RetrievalQueryScope scope = RetrievalQueryScope.from(plan);
-        List<KnowledgeDocument> availableDocuments = scope.crossDocument()
-                && documentMapper != null
+        // Resolve entities before classifying scope: natural comparisons rarely say "two papers".
+        List<KnowledgeDocument> availableDocuments = documentMapper != null
                 ? accessContext == null
                         ? documentMapper.findAll()
                         : documentMapper.findAccessible(
                                 accessContext.userId(), accessContext.organizationId(),
                                 accessContext.isSystemAdmin())
                 : List.of();
+        if (currentVersionIds != null) {
+            availableDocuments = availableDocuments.stream()
+                    .filter(document -> currentVersionIds.contains(document.getCurrentVersionId()))
+                    .toList();
+        }
         List<String> mentionedVersions = DocumentMentionMatcher.mentionedVersionIds(
                 plan.originalQuestion(), availableDocuments);
         if (currentVersionIds != null) {
@@ -105,6 +112,7 @@ public class HybridRetriever {
                     .filter(currentVersionIds::contains)
                     .toList();
         }
+        RetrievalQueryScope scope = RetrievalQueryScope.from(plan, mentionedVersions.size());
         int requestedTopK = scope.comprehensive()
                 ? Math.max(properties.getPerQueryTopK(),
                         properties.getComprehensivePerQueryTopK())
@@ -126,8 +134,16 @@ public class HybridRetriever {
                 retrievalExecutor);
         CompletableFuture<Lane> knnFuture = CompletableFuture.supplyAsync(
                 () -> runKnn(plan, currentVersionIds, topK), retrievalExecutor);
-        RetrievalResult result = new RetrievalResult(bm25Future.join(), knnFuture.join());
-        if (result.successful().isEmpty()) {
+        // 扩展路整体只用一次 embedding 批量编码，词面与向量各自并行发起。
+        List<CompletableFuture<Lane>> expansionFutures = expansionLanes(
+                plan, currentVersionIds, topK);
+        List<Lane> expansionResults = expansionFutures.stream()
+                .map(CompletableFuture::join)
+                .toList();
+        RetrievalResult result = new RetrievalResult(
+                bm25Future.join(), knnFuture.join(), mentionedVersions, expansionResults);
+        // 只看主两路：扩展路是尽力而为的补充，它们即使返回空也不能掩盖主链路全挂。
+        if (result.bm25().failed() && result.knn().failed()) {
             IllegalStateException failure = new IllegalStateException("BM25 与 KNN 检索均失败");
             for (Lane lane : result.lanes()) {
                 if (lane.cause() != null) {
@@ -137,6 +153,67 @@ public class HybridRetriever {
             throw failure;
         }
         return result;
+    }
+
+    /**
+     * 为原问题和每条扩展查询各建一路 BM25 与一路 KNN。
+     *
+     * <p>向量侧先一次性批量编码全部扩展文本，避免每路各打一次 embedding 接口；
+     * 编码失败时只放弃向量扩展路，词面扩展路照常执行。</p>
+     */
+    private List<CompletableFuture<Lane>> expansionLanes(RetrievalQueryPlan plan,
+                                                         List<String> versionIds,
+                                                         int topK) {
+        List<String> queries = plan.fusionQueries();
+        if (queries.isEmpty()) {
+            return List.of();
+        }
+        List<float[]> vectors;
+        try {
+            vectors = knnRetriever.embedAll(queries);
+            if (vectors != null && vectors.size() != queries.size()) {
+                vectors = null;
+            }
+        } catch (Exception e) {
+            log.warn("扩展查询批量 embedding 失败，仅保留词面扩展路", e);
+            vectors = null;
+        }
+        List<CompletableFuture<Lane>> futures = new java.util.ArrayList<>();
+        for (int index = 0; index < queries.size(); index++) {
+            String query = queries.get(index);
+            futures.add(CompletableFuture.supplyAsync(
+                    () -> runExpansionBm25(query, versionIds, topK), retrievalExecutor));
+            if (vectors != null) {
+                float[] vector = vectors.get(index);
+                futures.add(CompletableFuture.supplyAsync(
+                        () -> runExpansionKnn(query, vector, versionIds, topK),
+                        retrievalExecutor));
+            }
+        }
+        return List.copyOf(futures);
+    }
+
+    private Lane runExpansionBm25(String query, List<String> versionIds, int topK) {
+        long started = System.nanoTime();
+        try {
+            return Lane.ok("bm25-expansion", query,
+                    bm25Retriever.retrieve(query, versionIds, topK), elapsedMs(started));
+        } catch (Exception e) {
+            log.warn("扩展查询 BM25 失败，跳过该路: {}", query, e);
+            return Lane.failed("bm25-expansion", query, e, elapsedMs(started));
+        }
+    }
+
+    private Lane runExpansionKnn(String query, float[] vector,
+                                 List<String> versionIds, int topK) {
+        long started = System.nanoTime();
+        try {
+            return Lane.ok("knn-expansion", query,
+                    knnRetriever.search(vector, versionIds, topK), elapsedMs(started));
+        } catch (Exception e) {
+            log.warn("扩展查询 KNN 失败，跳过该路: {}", query, e);
+            return Lane.failed("knn-expansion", query, e, elapsedMs(started));
+        }
     }
 
     private Lane runBm25(RetrievalQueryPlan plan,
@@ -255,7 +332,25 @@ public class HybridRetriever {
      * <p>{@link #successful()} 只返回真正执行成功的路，供两路 RRF 使用；
      * 失败路和跳过路等价于公式里的 hit=0。</p>
      */
-    public record RetrievalResult(Lane bm25, Lane knn) {
+    public record RetrievalResult(Lane bm25, Lane knn, List<String> mentionedVersionIds,
+                                 List<Lane> expansionLanes) {
+
+        public RetrievalResult {
+            mentionedVersionIds = List.copyOf(mentionedVersionIds);
+            expansionLanes = expansionLanes == null ? List.of() : List.copyOf(expansionLanes);
+        }
+
+        public RetrievalResult(Lane bm25, Lane knn, List<String> mentionedVersionIds) {
+            this(bm25, knn, mentionedVersionIds, List.of());
+        }
+
+        public RetrievalResult(Lane bm25, Lane knn) {
+            this(bm25, knn, List.of(), List.of());
+        }
+
+        public RetrievalQueryScope scope(RetrievalQueryPlan plan) {
+            return RetrievalQueryScope.from(plan, mentionedVersionIds.size());
+        }
 
         public static RetrievalResult empty() {
             return new RetrievalResult(
@@ -263,15 +358,34 @@ public class HybridRetriever {
                     Lane.ok("knn", "", List.of(), 0));
         }
 
+        /** 主两路在前，扩展路在后；诊断与 RRF 共用同一份顺序。 */
         public List<Lane> lanes() {
-            return List.of(bm25, knn);
+            List<Lane> all = new java.util.ArrayList<>(2 + expansionLanes.size());
+            all.add(bm25);
+            all.add(knn);
+            all.addAll(expansionLanes);
+            return List.copyOf(all);
         }
 
-        /** 参与 RRF 的成功路命中列表，保持 bm25 / knn 顺序。 */
+        /** 参与 RRF 的成功路命中列表，保持 bm25 / knn / 扩展路顺序。 */
         public List<List<RetrievalCandidate>> successful() {
+            return successfulLanes().stream().map(Lane::hits).toList();
+        }
+
+        /**
+         * 与 {@link #successful()} 一一对应的 RRF 权重。
+         *
+         * @param expansionWeight 扩展路权重；主两路恒为 1.0
+         */
+        public List<Double> laneWeights(double expansionWeight) {
+            return successfulLanes().stream()
+                    .map(lane -> lane.channel().endsWith("-expansion") ? expansionWeight : 1.0)
+                    .toList();
+        }
+
+        private List<Lane> successfulLanes() {
             return lanes().stream()
                     .filter(lane -> !lane.failed() && !lane.skipped())
-                    .map(Lane::hits)
                     .toList();
         }
 

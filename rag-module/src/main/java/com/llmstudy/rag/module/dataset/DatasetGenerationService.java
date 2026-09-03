@@ -46,7 +46,7 @@ public class DatasetGenerationService {
         }
         String originalQuery = query.trim();
 
-        RagResult result = ragPipeline.execute(new RagRequest(
+        RagResult result = ragPipeline.executeWithDiagnostics(new RagRequest(
                 originalQuery,
                 "无",
                 RagIntentContext.generic(),
@@ -54,7 +54,7 @@ public class DatasetGenerationService {
 
         if (result.empty()) {
             return new DatasetGenerateResponse(
-                    originalQuery, RagChatFlow.NO_KNOWLEDGE_ANSWER, result.chunks());
+                    originalQuery, RagChatFlow.NO_KNOWLEDGE_ANSWER, result.chunks(), result.retrievalDiagnostics());
         }
 
         ChatClient.ChatClientRequestSpec request = chatClient.prompt();
@@ -69,6 +69,6 @@ public class DatasetGenerationService {
                 .call()
                 .chatResponse();
         String content = ChatStreamExecutor.extractContent(response, true);
-        return new DatasetGenerateResponse(originalQuery, content, result.chunks());
+        return new DatasetGenerateResponse(originalQuery, content, result.chunks(), result.retrievalDiagnostics());
     }
 }

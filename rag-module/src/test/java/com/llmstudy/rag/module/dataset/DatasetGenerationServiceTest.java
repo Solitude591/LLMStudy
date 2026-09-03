@@ -50,12 +50,12 @@ class DatasetGenerationServiceTest {
 
     @Test
     void passesNullAccessContextAndOriginalQueryToPipeline() {
-        when(pipeline.execute(any())).thenReturn(emptyResult());
+        when(pipeline.executeWithDiagnostics(any())).thenReturn(emptyResult());
 
         service.generate("表 3 中哪个模型的 F1 最高？");
 
         ArgumentCaptor<RagRequest> captor = ArgumentCaptor.forClass(RagRequest.class);
-        verify(pipeline).execute(captor.capture());
+        verify(pipeline).executeWithDiagnostics(captor.capture());
         RagRequest request = captor.getValue();
         assertEquals("表 3 中哪个模型的 F1 最高？", request.question());
         assertEquals("无", request.conversationContext());
@@ -65,7 +65,7 @@ class DatasetGenerationServiceTest {
 
     @Test
     void returnsOriginalQueryNotRewrittenQuestion() {
-        when(pipeline.execute(any())).thenReturn(new RagResult(
+        when(pipeline.executeWithDiagnostics(any())).thenReturn(new RagResult(
                 new LlmPrompt("system", "user"),
                 new RetrievalQueryPlan("原问题", "改写后的问题", "rewritten"),
                 List.of(new RagReference(1, "doc", "c1", null, null, null, null, 0.9, null)),
@@ -87,7 +87,7 @@ class DatasetGenerationServiceTest {
 
     @Test
     void emptyRetrievalReturnsFixedAnswerWithoutCallingLlm() {
-        when(pipeline.execute(any())).thenReturn(emptyResult());
+        when(pipeline.executeWithDiagnostics(any())).thenReturn(emptyResult());
 
         DatasetGenerateResponse response = service.generate("无结果问题");
 
@@ -99,7 +99,7 @@ class DatasetGenerationServiceTest {
 
     @Test
     void blankModelResponseThrows() {
-        when(pipeline.execute(any())).thenReturn(new RagResult(
+        when(pipeline.executeWithDiagnostics(any())).thenReturn(new RagResult(
                 new LlmPrompt("system", "user"),
                 new RetrievalQueryPlan("q", "rewritten", "rewritten"),
                 List.of(new RagReference(1, "doc", "c1", null, null, null, null, 0.5, null)),
@@ -117,7 +117,7 @@ class DatasetGenerationServiceTest {
     @Test
     void rejectsBlankQuery() {
         assertThrows(IllegalArgumentException.class, () -> service.generate("  "));
-        verify(pipeline, never()).execute(any());
+        verify(pipeline, never()).executeWithDiagnostics(any());
     }
 
     private static RagResult emptyResult() {

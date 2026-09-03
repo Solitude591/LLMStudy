@@ -18,6 +18,22 @@ public interface KnowledgeSegmentMapper {
     @Select("SELECT * FROM knowledge_segment WHERE doc_id = #{docId} ORDER BY chunk_order ASC")
     List<KnowledgeSegment> findByDocId(@Param("docId") String docId);
 
+    /**
+     * 取同一版本、同一标题路径下的顶层片段（parent 与 standalone），按原文顺序返回。
+     *
+     * <p>child 带 {@code parent_chunk_id}，会被条件排除：检索的输出单位是 parent /
+     * standalone，把 child 一起返回会让同一段正文重复出现。</p>
+     */
+    @Select("""
+            SELECT * FROM knowledge_segment
+            WHERE version_id = #{versionId}
+              AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.header_path')) = #{headerPath}
+              AND JSON_EXTRACT(metadata, '$.parent_chunk_id') IS NULL
+            ORDER BY chunk_order ASC
+            """)
+    List<KnowledgeSegment> findSectionTopLevel(@Param("versionId") String versionId,
+                                               @Param("headerPath") String headerPath);
+
     @Select("SELECT * FROM knowledge_segment WHERE embedding_id = #{embeddingId}")
     KnowledgeSegment findByEmbeddingId(@Param("embeddingId") String embeddingId);
 

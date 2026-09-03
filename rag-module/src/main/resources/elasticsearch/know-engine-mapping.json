@@ -7,8 +7,8 @@
   "mappings": {
     "dynamic": "strict",
     "_meta": {
-      "schema_version": 3,
-      "description": "RAG document segment index"
+      "schema_version": 4,
+      "description": "RAG document segment index; header_path is searchable so section titles reach BM25"
     },
     "properties": {
       "vector": {
@@ -48,9 +48,15 @@
             "doc_values": false
           },
           "header_path": {
-            "type": "keyword",
-            "index": false,
-            "doc_values": false
+            "type": "text",
+            "analyzer": "ik_max_word",
+            "search_analyzer": "ik_smart",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 512
+              }
+            }
           },
           "source_url": {
             "type": "keyword",

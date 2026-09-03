@@ -57,15 +57,22 @@ def _merge_generation_failures(run_dir: Path, generation_latency: list[dict]) ->
         current.write_text(json.dumps(metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _cost_estimate(question_count: int, include_ragas: bool) -> dict:
-    dataset_calls = question_count * 2
+def _cost_estimate(question_count: int, include_ragas: bool, *,
+                   include_generation: bool = True, include_retrieval: bool = True,
+                   warmup: int = 0) -> dict:
+    dataset_calls = question_count * 2 if include_generation else 0
+    retrieval_calls = question_count if include_retrieval and not include_generation else 0
+    warmup_calls = warmup * (2 * include_generation + (include_retrieval and not include_generation))
     ragas_low = question_count * 6 if include_ragas else 0
     ragas_high = question_count * 12 if include_ragas else 0
     return {
         "question_count": question_count,
         "estimated_dataset_llm_calls": dataset_calls,
+        "estimated_retrieval_rewrite_llm_calls": retrieval_calls,
+        "estimated_warmup_llm_calls": warmup_calls,
         "estimated_ragas_llm_calls_range": [ragas_low, ragas_high],
-        "estimated_total_llm_calls_range": [dataset_calls + ragas_low, dataset_calls + ragas_high],
+        "estimated_total_llm_calls_range": [dataset_calls + retrieval_calls + warmup_calls + ragas_low,
+                                            dataset_calls + retrieval_calls + warmup_calls + ragas_high],
         "note": "Call counts are planning estimates; monetary cost depends on configured model token pricing.",
     }
 
@@ -78,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=None, help="run directory; defaults to data/runs/<id>")
     parser.add_argument("--base-url", default=os.getenv("RAG_BASE_URL", "http://localhost:8080"))
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--question-id", action="append", default=[],
+                        help="repeat to run an explicit bad-case subset without editing Golden Set")
     parser.add_argument("--retrieval-k", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=0)
     parser.add_argument("--concurrency", type=int, default=1)
@@ -96,21 +105,32 @@ def main(argv: list[str] | None = None) -> int:
     run_dir = args.output or create_run_dir()
     run_dir.mkdir(parents=True, exist_ok=True)
     rows = load_jsonl(args.input)
+    if args.question_id:
+        requested_ids = set(args.question_id)
+        missing = requested_ids - {row.get("question_id") for row in rows}
+        if missing:
+            print(f"unknown question IDs: {sorted(missing)}", file=sys.stderr)
+            return 2
+        rows = [row for row in rows if row.get("question_id") in requested_ids]
     if args.limit > 0:
         rows = rows[: args.limit]
     corpus_path = args.corpus_manifest if args.corpus_manifest.is_file() else None
+    # 220/题型下限只约束 golden-set-all；dev/test 分层切分后本来就不会凑满。
+    is_split = args.input.name.endswith(("-dev.jsonl", "-test.jsonl"))
     validation = validate_rows(
         rows,
         load_manifest(corpus_path),
         corpus_path,
         check_quotes=args.check_quotes,
-        enforce_minimums=args.limit <= 0,
+        enforce_minimums=args.limit <= 0 and not is_split and not args.question_id,
     )
     (run_dir / "validation.json").write_text(
         json.dumps(validation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     if not validation["valid"]:
         print("Golden Set validation failed; no external calls were made", file=sys.stderr)
+        for error in validation.get("errors") or []:
+            print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
     parameters = {
@@ -124,12 +144,17 @@ def main(argv: list[str] | None = None) -> int:
         "warmup": args.warmup,
         "concurrency": args.concurrency,
         "timeout_seconds": args.timeout,
+        "selected_question_ids": [row.get("question_id") for row in rows],
+        "retrieval_source": "prefer-dataset-diagnostics; fallback-separate-diagnose",
+        "service_parameter_source": "environment-assumptions-not-runtime-snapshot",
     }
     manifest = build_manifest(run_dir, args.input, corpus_path, args.base_url, parameters)
     (run_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    estimate = _cost_estimate(len(rows), not args.skip_ragas)
+    estimate = _cost_estimate(len(rows), not args.skip_ragas,
+                              include_generation=not args.skip_generate,
+                              include_retrieval=not args.skip_retrieval, warmup=args.warmup)
     (run_dir / "cost-estimate.json").write_text(
         json.dumps(estimate, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
@@ -141,6 +166,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.validate_only:
         update_manifest_from_run(run_dir)
         return 0
+
+    try:
+        return _execute_stages(args, run_dir, rows)
+    finally:
+        update_manifest_from_run(run_dir)
+
+
+def _execute_stages(args: argparse.Namespace, run_dir: Path, rows: list[dict]) -> int:
 
     generated = generated_path(run_dir)
     generation_latency: list[dict] = []
@@ -169,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
             args.warmup, args.concurrency, args.timeout, args.retries,
         )
     _merge_generation_failures(run_dir, generation_latency)
+    # Persist completed generation/retrieval before the long or interruptible judge phase.
+    update_manifest_from_run(run_dir)
 
     ragas_code = 0
     if not args.skip_ragas:
@@ -182,7 +217,6 @@ def main(argv: list[str] | None = None) -> int:
                 "--limit", str(args.limit),
                 "--retries", str(args.retries),
             ])
-    update_manifest_from_run(run_dir)
     print(f"run directory: {run_dir}")
     return ragas_code
 

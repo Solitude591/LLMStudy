@@ -16,6 +16,7 @@ import com.llmstudy.rag.module.rag.prompt.RagPromptInjector;
 import com.llmstudy.rag.module.rag.query.QueryRewriter;
 import com.llmstudy.rag.module.rag.retrieval.HybridRetriever;
 import com.llmstudy.rag.module.rag.retrieval.ParentChunkExpander;
+import com.llmstudy.rag.module.rag.retrieval.SectionChunkAssembler;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayDeque;
@@ -138,7 +139,8 @@ class RagPipelineTest {
         properties.setCrossDocumentMaxChunks(2);
 
         RagResult result = new RagPipeline(
-                rewriter, retriever, aggregator, expander, injector, properties)
+                rewriter, retriever, aggregator, expander, passthroughAssembler(),
+                injector, properties)
                 .execute(request);
 
         assertEquals(List.of("d2a text", "d1a text", "d1b text", "d1c text"),
@@ -274,7 +276,16 @@ class RagPipelineTest {
         RetrievalProperties properties = new RetrievalProperties();
         properties.setTopN(topN);
         return new RagPipeline(
-                rewriter, retriever, aggregator, expander, injector, properties);
+                rewriter, retriever, aggregator, expander, passthroughAssembler(),
+                injector, properties);
+    }
+
+    /** 章节合并在本类的用例里不参与断言：这里只验证排序、去重和 Top-N 补位。 */
+    private static SectionChunkAssembler passthroughAssembler() {
+        SectionChunkAssembler assembler = mock(SectionChunkAssembler.class);
+        when(assembler.assemble(any(), anyMap()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        return assembler;
     }
 
     private static RrfRerankAggregator.RankedEvidence ranked(

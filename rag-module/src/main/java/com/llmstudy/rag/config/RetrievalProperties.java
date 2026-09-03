@@ -32,8 +32,28 @@ public class RetrievalProperties {
     /** 明确跨论文问题首轮选择时，单篇文档最多占用的证据条数。 */
     private int crossDocumentMaxChunks = 3;
 
+    /**
+     * 跨论文题为「被点名文档」预留席位所要求的最低 ReRanker 相关度。
+     *
+     * <p>点名一篇论文只说明用户关心它，不代表这篇论文里真的有答案。低于该分数的候选
+     * 不再无条件前移，否则整个 Top-N 会被相关度接近 0 的片段占满。</p>
+     */
+    private double focusedDocumentMinScore = 0.2;
+
+    /** 是否把同一标题路径下被切散的相邻片段合并成一条证据。 */
+    private boolean sectionMergeEnabled = true;
+
+    /** 单条章节证据的字符上限，防止长附录整章进入上下文。 */
+    private int sectionMergeMaxChars = 4000;
+
+    /** 单条章节证据最多合并的顶层片段数。 */
+    private int sectionMergeMaxChunks = 4;
+
     /** RRF 与最终名次融合共用的 k。 */
     private int rrfK = 60;
+
+    /** 扩展查询（原问题、同义改写、子问题、HyDE）通道在 RRF 中的权重。 */
+    private double expansionLaneWeight = 0.5;
 
     /** 最终名次中 BGE 名次项的权重。 */
     private double bgeRankWeight = 0.85;
@@ -95,6 +115,46 @@ public class RetrievalProperties {
 
     public void setCrossDocumentMaxChunks(int crossDocumentMaxChunks) {
         this.crossDocumentMaxChunks = crossDocumentMaxChunks;
+    }
+
+    public double getExpansionLaneWeight() {
+        return expansionLaneWeight;
+    }
+
+    public void setExpansionLaneWeight(double expansionLaneWeight) {
+        this.expansionLaneWeight = expansionLaneWeight;
+    }
+
+    public boolean isSectionMergeEnabled() {
+        return sectionMergeEnabled;
+    }
+
+    public void setSectionMergeEnabled(boolean sectionMergeEnabled) {
+        this.sectionMergeEnabled = sectionMergeEnabled;
+    }
+
+    public int getSectionMergeMaxChars() {
+        return sectionMergeMaxChars;
+    }
+
+    public void setSectionMergeMaxChars(int sectionMergeMaxChars) {
+        this.sectionMergeMaxChars = sectionMergeMaxChars;
+    }
+
+    public int getSectionMergeMaxChunks() {
+        return sectionMergeMaxChunks;
+    }
+
+    public void setSectionMergeMaxChunks(int sectionMergeMaxChunks) {
+        this.sectionMergeMaxChunks = sectionMergeMaxChunks;
+    }
+
+    public double getFocusedDocumentMinScore() {
+        return focusedDocumentMinScore;
+    }
+
+    public void setFocusedDocumentMinScore(double focusedDocumentMinScore) {
+        this.focusedDocumentMinScore = focusedDocumentMinScore;
     }
 
     public int getRrfK() {

@@ -39,7 +39,22 @@ public record RetrievalDiagnoseResponse(
         failures = failures == null ? List.of() : List.copyOf(failures);
     }
 
-    public record QueryPlan(String originalQuestion, String standaloneZh, String standaloneEn) {
+    /**
+     * @param strategy   改写模型选择的检索策略；消融实验按它分组
+     * @param expansions 该策略额外产出、各自成一路参与融合的检索文本
+     */
+    public record QueryPlan(String originalQuestion, String standaloneZh, String standaloneEn,
+                            boolean crossDocument, List<String> mentionedVersionIds,
+                            String strategy, List<String> expansions) {
+        public QueryPlan {
+            mentionedVersionIds = mentionedVersionIds == null
+                    ? List.of() : List.copyOf(mentionedVersionIds);
+            expansions = expansions == null ? List.of() : List.copyOf(expansions);
+        }
+
+        public QueryPlan(String originalQuestion, String standaloneZh, String standaloneEn) {
+            this(originalQuestion, standaloneZh, standaloneEn, false, List.of(), null, List.of());
+        }
     }
 
     public record Lane(String channel, String query, boolean skipped, String error,

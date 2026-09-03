@@ -1,6 +1,7 @@
 package com.llmstudy.rag.dto;
 
 import java.util.List;
+import com.llmstudy.rag.module.rag.model.RetrievalDiagnoseResponse;
 
 /**
  * RAGAS 评估数据集生成结果。
@@ -12,7 +13,12 @@ import java.util.List;
 public record DatasetGenerateResponse(
         String query,
         String response,
-        List<String> chunks) {
+        List<String> chunks,
+        RetrievalDiagnoseResponse retrievalDiagnostics) {
+
+    public DatasetGenerateResponse(String query, String response, List<String> chunks) {
+        this(query, response, chunks, null);
+    }
 
     public DatasetGenerateResponse {
         chunks = chunks == null ? List.of() : List.copyOf(chunks);

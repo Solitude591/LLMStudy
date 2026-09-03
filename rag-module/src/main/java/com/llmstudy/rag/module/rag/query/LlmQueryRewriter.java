@@ -16,6 +16,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -82,8 +83,11 @@ public class LlmQueryRewriter implements QueryRewriter {
         }
         try {
             // originalQuestion 只取请求原文，不信任模型回显。
+            // strategy/expansions 解析失败只会退化成 DIRECT，不影响主查询可用性。
             return new RetrievalQueryPlan(
-                    request.question(), payload.standaloneZh(), payload.standaloneEn());
+                    request.question(), payload.standaloneZh(), payload.standaloneEn(),
+                    QueryRewriteStrategy.fromValue(payload.strategy()),
+                    payload.expansions() == null ? List.of() : payload.expansions());
         } catch (IllegalArgumentException e) {
             // compact ctor 的 IAE 会变成 HTTP 400，必须转成改写失败。
             throw new QueryRewriteException(e);
@@ -127,7 +131,14 @@ public class LlmQueryRewriter implements QueryRewriter {
         }
     }
 
-    /** 模型 JSON 载荷；字段名必须与 Prompt 中的 schema 一致。 */
-    private record Payload(String standaloneZh, String standaloneEn) {
+    /**
+     * 模型 JSON 载荷；字段名必须与 Prompt 中的 schema 一致。
+     *
+     * <p>{@code strategy} 与 {@code expansions} 是可选字段：旧 Prompt 或模型漏字段时
+     * 反序列化为 null，由 {@link QueryRewriteStrategy#fromValue} 和
+     * {@link RetrievalQueryPlan} 退回 DIRECT，不抛改写失败。</p>
+     */
+    private record Payload(String standaloneZh, String standaloneEn,
+                           String strategy, List<String> expansions) {
     }
 }

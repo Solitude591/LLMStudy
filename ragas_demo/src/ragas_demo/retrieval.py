@@ -53,14 +53,15 @@ def _post(url: str, body: dict, timeout: float) -> tuple[dict, float]:
     return payload, elapsed_ms
 
 
-def diagnose(base_url: str, query: str, timeout: float, retries: int = 3) -> tuple[dict, float, int]:
+def diagnose(base_url: str, query: str, timeout: float, retries: int = 3,
+             conversation_context: str = "无") -> tuple[dict, float, int]:
     url = f"{base_url.rstrip('/')}/dev/rag/retrieval/diagnose"
     last_error: Exception | None = None
     for attempt in range(1, max(1, retries) + 1):
         try:
             payload, elapsed_ms = _post(
                 url,
-                {"query": query, "conversationContext": "无", "includeText": False},
+                {"query": query, "conversationContext": conversation_context, "includeText": False},
                 timeout,
             )
             return payload, elapsed_ms, attempt - 1
@@ -72,7 +73,7 @@ def diagnose(base_url: str, query: str, timeout: float, retries: int = 3) -> tup
     raise last_error
 
 
-def _timings(payload: dict, roundtrip_ms: float, dataset_api_ms: object) -> dict[str, float]:
+def _timings(payload: dict, roundtrip_ms: float | None, dataset_api_ms: object) -> dict[str, float]:
     raw = payload.get("timings") if isinstance(payload.get("timings"), dict) else {}
     stages = {
         "query_rewrite": raw.get("queryRewriteMs"),
@@ -98,9 +99,16 @@ def evaluate_one(
     question_id = str(row.get("question_id") or f"row-{index:04d}")
     started = time.perf_counter_ns()
     try:
-        payload, roundtrip_ms, retry_count = diagnose(
-            base_url, str(row["user_input"]), timeout, retries
-        )
+        payload = row.get("retrieval_diagnostics")
+        if isinstance(payload, dict):
+            roundtrip_ms, retry_count = None, 0
+            retrieval_source = "dataset-generation-request"
+        else:
+            payload, roundtrip_ms, retry_count = diagnose(
+                base_url, str(row["user_input"]), timeout, retries,
+                str(row.get("conversation_context") or "无"),
+            )
+            retrieval_source = "separate-diagnose-request"
         hits = payload.get("finalCandidates")
         if not isinstance(hits, list):
             raise RuntimeError("diagnose response lacks finalCandidates")
@@ -129,6 +137,8 @@ def evaluate_one(
             "trace_id": payload.get("traceId"),
             "success": True,
             "retry_count": retry_count,
+            "retrieval_source": retrieval_source,
+            "diagnostic_snapshot": payload,
         }
         latency = {
             "question_id": question_id,
@@ -237,10 +247,13 @@ def run_retrieval(
             f"{len(pending)} remaining"
         )
 
-    if pending and warmup > 0:
+    warmup_pending = [index for index in pending if not isinstance(rows[index].get("retrieval_diagnostics"), dict)]
+    if warmup_pending and warmup > 0:
         print(f"warmup={warmup} (excluded from percentiles)")
         for _ in range(warmup):
-            diagnose(base_url, str(rows[pending[0]]["user_input"]), timeout, retries)
+            warmup_row = rows[warmup_pending[0]]
+            diagnose(base_url, str(warmup_row["user_input"]), timeout, retries,
+                     str(warmup_row.get("conversation_context") or "无"))
 
     lock = threading.Lock()
     finished = len(rows) - len(pending)

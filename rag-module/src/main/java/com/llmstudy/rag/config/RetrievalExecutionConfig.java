@@ -17,8 +17,10 @@ public class RetrievalExecutionConfig {
     public Executor retrievalExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix("rag-retrieval-");
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(16);
+        // 一次检索现在最多发起 2 主路 + 8 扩展路，全是 ES/embedding 的 IO 等待。
+        // 核心线程数低于并发路数时，多余的路会排队，把并行召回退化成串行。
+        executor.setCorePoolSize(12);
+        executor.setMaxPoolSize(32);
         executor.setQueueCapacity(100);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);

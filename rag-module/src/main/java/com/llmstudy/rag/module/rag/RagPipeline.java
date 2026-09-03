@@ -21,6 +21,7 @@ import com.llmstudy.rag.module.rag.query.QueryRewriter;
 import com.llmstudy.rag.module.rag.query.RetrievalQueryScope;
 import com.llmstudy.rag.module.rag.retrieval.HybridRetriever;
 import com.llmstudy.rag.module.rag.retrieval.ParentChunkExpander;
+import com.llmstudy.rag.module.rag.retrieval.SectionChunkAssembler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -51,6 +52,7 @@ public class RagPipeline {
     private final HybridRetriever hybridRetriever;
     private final RrfRerankAggregator aggregator;
     private final ParentChunkExpander parentChunkExpander;
+    private final SectionChunkAssembler sectionChunkAssembler;
     private final RagPromptInjector promptInjector;
     private final RetrievalProperties properties;
 
@@ -58,12 +60,14 @@ public class RagPipeline {
                        HybridRetriever hybridRetriever,
                        RrfRerankAggregator aggregator,
                        ParentChunkExpander parentChunkExpander,
+                       SectionChunkAssembler sectionChunkAssembler,
                        RagPromptInjector promptInjector,
                        RetrievalProperties properties) {
         this.queryRewriter = queryRewriter;
         this.hybridRetriever = hybridRetriever;
         this.aggregator = aggregator;
         this.parentChunkExpander = parentChunkExpander;
+        this.sectionChunkAssembler = sectionChunkAssembler;
         this.promptInjector = promptInjector;
         this.properties = properties;
     }
@@ -91,6 +95,18 @@ public class RagPipeline {
                 steps.selected.stream().map(RetrievalCandidate::text).toList());
     }
 
+    /** Dataset evaluation captures the exact retrieval used to generate the answer. */
+    public RagResult executeWithDiagnostics(RagRequest request) {
+        String traceId = UUID.randomUUID().toString();
+        try (LlmTraceContext ignored = LlmTraceContext.openDiagnose(traceId)) {
+            Steps steps = run(request, stage -> { });
+            RagPromptInjector.Injection injection = promptInjector.inject(request, steps.plan, steps.selected);
+            return new RagResult(injection.prompt(), steps.plan, injection.references(),
+                    steps.selected.stream().map(RetrievalCandidate::text).toList(),
+                    diagnosticSnapshot(traceId, steps, false));
+        }
+    }
+
     /**
      * 检索诊断：与 {@link #execute} 走同一套改写和排序，不注入 Prompt、不调回答模型。
      *
@@ -104,6 +120,11 @@ public class RagPipeline {
         try (LlmTraceContext ignored = LlmTraceContext.openDiagnose(traceId)) {
             log.info("retrieval diagnose start traceId={}", traceId);
             Steps steps = run(request, stage -> { });
+            return diagnosticSnapshot(traceId, steps, includeText);
+        }
+    }
+
+    private RetrievalDiagnoseResponse diagnosticSnapshot(String traceId, Steps steps, boolean includeText) {
             List<String> failures = new ArrayList<>();
             steps.retrieval.lanes().stream()
                     .filter(HybridRetriever.Lane::failed)
@@ -117,7 +138,10 @@ public class RagPipeline {
             return new RetrievalDiagnoseResponse(
                     traceId,
                     new QueryPlan(steps.plan.originalQuestion(),
-                            steps.plan.standaloneZh(), steps.plan.standaloneEn()),
+                            steps.plan.standaloneZh(), steps.plan.standaloneEn(),
+                            steps.retrieval.scope(steps.plan).crossDocument(),
+                            steps.retrieval.mentionedVersionIds(),
+                            steps.plan.strategy().name(), steps.plan.expansions()),
                     steps.retrieval.lanes().stream()
                             .map(lane -> new Lane(lane.channel(), lane.query(), lane.skipped(),
                                     lane.error(), lane.elapsedMs(),
@@ -137,7 +161,6 @@ public class RagPipeline {
                     steps.ranked.bgeQuery(),
                     steps.timings,
                     failures);
-        }
     }
 
     /**
@@ -163,10 +186,12 @@ public class RagPipeline {
         progress.accept(RagProgressStage.EVIDENCE_ORGANIZATION);
         RrfRerankAggregator.RankedEvidence ranked = aggregator.aggregate(plan, retrieval);
         List<Expand> expand = new ArrayList<>();
-        RetrievalQueryScope scope = RetrievalQueryScope.from(plan);
+        RetrievalQueryScope scope = retrieval.scope(plan);
         long selectionStarted = System.nanoTime();
         List<RetrievalCandidate> selected = backfill(
-                prioritizeFocusedDocuments(ranked.ranked(), scope), expand, scope);
+                prioritizeFocusedDocuments(ranked.ranked(), scope,
+                        properties.getFocusedDocumentMinScore()),
+                expand, scope);
         long selectionElapsedMs = elapsedMs(selectionStarted);
         StageTimings timings = new StageTimings(
                 rewriteElapsedMs,
@@ -193,6 +218,7 @@ public class RagPipeline {
         int topN = Math.max(1, requestedTopN);
         int documentCap = Math.max(1, properties.getCrossDocumentMaxChunks());
         Map<String, KnowledgeSegment> cache = new HashMap<>();
+        Map<String, List<KnowledgeSegment>> sectionCache = SectionChunkAssembler.newCache();
         Map<String, Integer> chunksPerDocument = new HashMap<>();
         Set<String> emitted = new HashSet<>();
         List<RetrievalCandidate> selected = new ArrayList<>();
@@ -201,8 +227,11 @@ public class RagPipeline {
             if (selected.size() >= topN) {
                 break;
             }
-            RetrievalCandidate output = parentChunkExpander.expandOne(candidate, cache);
-            String action = expandAction(candidate, output);
+            RetrievalCandidate expanded = parentChunkExpander.expandOne(candidate, cache);
+            // 章节合并放在 parent 展开之后：先拿到本片所属的顶层片段，再按标题路径向两侧补齐。
+            RetrievalCandidate output = sectionChunkAssembler.assemble(expanded, sectionCache);
+            String action = expandAction(candidate, expanded)
+                    + (output.id().equals(expanded.id()) ? "" : "+section-merged");
             if (!emitted.add(output.id())) {
                 expand.add(new Expand(candidate.id(), output.id(), "dropped-duplicate"));
                 continue;
@@ -239,20 +268,38 @@ public class RagPipeline {
         return "chunk:" + candidate.id();
     }
 
-    /** 跨论文题先为每篇显式点名文档保留前两条词面证据，再回到融合排序。 */
+    /**
+     * 跨论文题先为每篇显式点名文档保留前两条词面证据，再回到融合排序。
+     *
+     * <p>只有相关度达到 {@code minScore} 的候选才享有预留席位。被点名的论文里可能
+     * 根本没有答案，无条件前移会让整个 Top-N 被相关度接近 0 的片段吃掉，
+     * 把真正含答案的片段挤出证据预算。ReRanker 未生效（无 bgeScore）时不做这层过滤，
+     * 保持原有的覆盖优先行为。</p>
+     */
     private static List<RetrievalCandidate> prioritizeFocusedDocuments(
-            List<RetrievalCandidate> ranked, RetrievalQueryScope scope) {
+            List<RetrievalCandidate> ranked, RetrievalQueryScope scope, double minScore) {
         if (!scope.crossDocument()) {
             return ranked;
         }
         List<RetrievalCandidate> prioritized = new ArrayList<>();
         Set<String> ids = new HashSet<>();
+        // Round-robin by document, not global rank: a third target must not wait
+        // behind both reserved chunks of each earlier document.
+        Map<String, List<RetrievalCandidate>> focused = new java.util.LinkedHashMap<>();
         for (RetrievalCandidate candidate : ranked) {
-            Object focusedRank = candidate.metadata().get(
-                    SegmentMetadataKeys.FOCUSED_DOCUMENT_RANK);
-            if (focusedRank != null && focusedRank(focusedRank) <= 2) {
-                prioritized.add(candidate);
-                ids.add(candidate.id());
+            Object rank = candidate.metadata().get(SegmentMetadataKeys.FOCUSED_DOCUMENT_RANK);
+            if (rank != null && focusedRank(rank) <= 2 && relevantEnough(candidate, minScore)) {
+                focused.computeIfAbsent(documentKey(candidate), key -> new ArrayList<>())
+                        .add(candidate);
+            }
+        }
+        for (int index = 0; index < 2; index++) {
+            for (List<RetrievalCandidate> candidates : focused.values()) {
+                if (index < candidates.size()) {
+                    RetrievalCandidate candidate = candidates.get(index);
+                    prioritized.add(candidate);
+                    ids.add(candidate.id());
+                }
             }
         }
         for (RetrievalCandidate candidate : ranked) {
@@ -261,6 +308,12 @@ public class RagPipeline {
             }
         }
         return List.copyOf(prioritized);
+    }
+
+    /** 没有 bgeScore 说明 ReRanker 回退了，此时不能用分数做门槛。 */
+    private static boolean relevantEnough(RetrievalCandidate candidate, double minScore) {
+        Double score = candidate.bgeScore();
+        return score == null || score >= minScore;
     }
 
     private static int focusedRank(Object value) {

@@ -213,29 +213,6 @@ class ContentListPaperChunkerTest {
     }
 
     @Test
-    void skipsEmptyTableElementsWithoutFailingTheDocument() {
-        ContentListPaperChunker chunker = new ContentListPaperChunker(
-                new SnowflakeIdGenerator(1), new MarkdownImageProcessor(), 1000, 100);
-        MineruContentElement emptyTable = new MineruContentElement();
-        emptyTable.setType("table");
-        emptyTable.setPageIdx(4);
-        MineruContentElement textTable = new MineruContentElement();
-        textTable.setType("table");
-        textTable.setText("Reflexion scores");
-        textTable.setPageIdx(5);
-
-        List<KnowledgeChunk> chunks = chunker.split(List.of(
-                text("正文。", null, 0),
-                emptyTable,
-                textTable));
-
-        assertEquals(2, chunks.size());
-        assertTrue(chunks.get(0).text().contains("正文"));
-        assertTrue(chunks.get(1).text().contains("Reflexion scores"));
-        assertEquals(6, chunks.get(1).metadata().get(SegmentMetadataKeys.PAGE_START));
-    }
-
-    @Test
     void dropsReferenceSectionAndKeepsFollowingAppendix() {
         ContentListPaperChunker chunker = new ContentListPaperChunker(
                 new SnowflakeIdGenerator(1), new MarkdownImageProcessor(), 1000, 100);

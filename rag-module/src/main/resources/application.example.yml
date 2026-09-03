@@ -162,6 +162,11 @@ rag:
     rerank-candidate-count: ${RAG_RETRIEVAL_RERANK_CANDIDATE_COUNT:20}
     top-n: ${RAG_RETRIEVAL_TOP_N:5}
     rrf-k: ${RAG_RETRIEVAL_RRF_K:60}
+    expansion-lane-weight: ${RAG_RETRIEVAL_EXPANSION_LANE_WEIGHT:0.5}
+    focused-document-min-score: ${RAG_RETRIEVAL_FOCUSED_DOC_MIN_SCORE:0.2}
+    section-merge-enabled: ${RAG_RETRIEVAL_SECTION_MERGE_ENABLED:true}
+    section-merge-max-chars: ${RAG_RETRIEVAL_SECTION_MERGE_MAX_CHARS:4000}
+    section-merge-max-chunks: ${RAG_RETRIEVAL_SECTION_MERGE_MAX_CHUNKS:4}
     bge-rank-weight: 0.85
     retrieval-rerank-weight: 0.15
 

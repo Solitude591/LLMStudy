@@ -26,11 +26,17 @@ public record RetrievalQueryScope(boolean comprehensive, boolean crossDocument) 
                     + "end-to-end process)\\b");
 
     public static RetrievalQueryScope from(RetrievalQueryPlan plan) {
+        return from(plan, 0);
+    }
+
+    /** Entity resolution uses accessible, published documents, never model-invented names. */
+    public static RetrievalQueryScope from(RetrievalQueryPlan plan, int mentionedDocumentCount) {
         String original = plan == null || plan.originalQuestion() == null
                 ? "" : plan.originalQuestion();
         String english = plan == null || plan.standaloneEn() == null
                 ? "" : plan.standaloneEn();
-        boolean crossDocument = CROSS_DOCUMENT_ZH.matcher(original).find()
+        boolean crossDocument = mentionedDocumentCount >= 2
+                || CROSS_DOCUMENT_ZH.matcher(original).find()
                 || CROSS_DOCUMENT_EN.matcher(original).find();
         boolean comprehensive = crossDocument
                 || MULTI_TASK_ZH.matcher(original).find()

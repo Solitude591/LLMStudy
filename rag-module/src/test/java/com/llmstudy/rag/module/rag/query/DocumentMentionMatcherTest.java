@@ -58,4 +58,24 @@ class DocumentMentionMatcherTest {
         document.setCurrentVersionId(versionId);
         return document;
     }
+
+    @Test
+    void recognizesShortAliasesAndChineseBoundariesWithoutSubstringMatches() {
+        List<KnowledgeDocument> documents = List.of(
+                document("2020_NeurIPS_RAG", "rag"),
+                document("2023_arXiv_RAGAS", "ragas"),
+                document("2020_EMNLP_DPR", "dpr"),
+                document("2023_ICCV_Segment-Anything", "sam"),
+                document("2021_ICLR_Vision-Transformer", "vit"));
+        assertEquals(List.of("ragas"), DocumentMentionMatcher.mentionedVersionIds("在RAGAS中", documents));
+        assertEquals(List.of("rag", "dpr"), DocumentMentionMatcher.mentionedVersionIds("DPR和RAG有什么区别", documents));
+        assertEquals(List.of("sam", "vit"), DocumentMentionMatcher.mentionedVersionIds("SAM与ViT", documents));
+        assertEquals(List.of(), DocumentMentionMatcher.mentionedVersionIds("SAM-Med2D", documents));
+    }
+
+    @Test
+    void duplicateTitlesDoNotResolveToAnArbitraryDocument() {
+        assertEquals(List.of(), DocumentMentionMatcher.mentionedVersionIds("RAG的机制", List.of(
+                document("2020_RAG", "a"), document("2021_RAG", "b"))));
+    }
 }

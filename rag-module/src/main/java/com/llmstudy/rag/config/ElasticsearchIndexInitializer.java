@@ -26,7 +26,9 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
             LoggerFactory.getLogger(ElasticsearchIndexInitializer.class);
     private static final String MAPPING_RESOURCE =
             "elasticsearch/know-engine-mapping.json";
-    private static final int SCHEMA_VERSION = 3;
+    private static final int SCHEMA_VERSION = 4;
+    /** 与 mapping 文件保持一致；不校验分词器时，旧索引会静默退化为单字切分。 */
+    private static final String TEXT_ANALYZER = "ik_max_word";
 
     private final ElasticsearchClient client;
     private final ElasticsearchProperties properties;
@@ -80,7 +82,12 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
         }
     }
 
-    /** schema 1/2 → 3：补齐页码与 language，并更新 schema_version。 */
+    /**
+     * schema 1/2 → 3：补齐页码与 language，并更新 schema_version。
+     *
+     * <p>3 → 4 把 header_path 从 keyword 改成可检索 text，属于不可原地变更的字段类型改动，
+     * 只能重建索引后 reindex，这里不做静默升级，交由 {@link #validateIndex} 报错。</p>
+     */
     private void maybeUpgradeSchema(String indexName) throws Exception {
         IndexMappingRecord record = client.indices()
                 .getMapping(request -> request.index(indexName))
@@ -146,6 +153,9 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
 
         Property text = topLevel.get("text");
         require(indexName, text != null && text.isText(), "text 必须为 text");
+        // 分词器决定中文 BM25 是按词还是按单字召回，索引一旦建好就无法原地改，必须校验。
+        require(indexName, TEXT_ANALYZER.equals(text.text().analyzer()),
+                "text.analyzer 应为 " + TEXT_ANALYZER + "，实际为 " + text.text().analyzer());
 
         Property metadata = topLevel.get("metadata");
         require(indexName, metadata != null && metadata.isObject(),
@@ -157,7 +167,7 @@ public class ElasticsearchIndexInitializer implements InitializingBean {
         requireKeyword(indexName, metadataFields, "doc_id");
         requireTextWithKeyword(indexName, metadataFields, "version_id");
         requireKeyword(indexName, metadataFields, "parent_chunk_id");
-        requireKeyword(indexName, metadataFields, "header_path");
+        requireTextWithKeyword(indexName, metadataFields, "header_path");
         requireKeyword(indexName, metadataFields, "source_url");
         requireInteger(indexName, metadataFields, "page_start");
         requireInteger(indexName, metadataFields, "page_end");

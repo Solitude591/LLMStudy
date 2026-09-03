@@ -1,0 +1,4 @@
+# 本地 BGE ReRanker 模型在 rag-module/models，避免再放到仓库根目录
+/models/
+# LLM 文件日志在 rag-module/logs，避免再写到仓库根目录
+/logs/

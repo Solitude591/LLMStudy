@@ -19,11 +19,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** Elasticsearch BM25 词面检索适配器。 */
+/**
+ * Elasticsearch BM25 词面检索适配器。
+ *
+ * <p>只在 {@code text} 上匹配。把 {@code header_path} 一起放进 multi_match 试过，
+ * 实测 recall@20 从 0.775 掉到 0.739（boost 3.0 时掉到 0.595）：标题字段只有十几个词，
+ * BM25 长度归一化会把「标题里出现过一次查询词」抬到「正文里真正展开论述」之上。
+ * 章节标题的价值改在 ReRanker 侧兑现——那里用完整 header_path 拼进候选文档。</p>
+ */
 @Component
 public class Bm25Retriever {
 
     private static final Logger log = LoggerFactory.getLogger(Bm25Retriever.class);
+    private static final String TEXT_FIELD = "text";
     private final ElasticsearchClient client;
     private final ElasticsearchProperties properties;
 
@@ -91,9 +99,12 @@ public class Bm25Retriever {
      */
     private List<RetrievalCandidate> search(String question, List<String> currentVersionIds,
                                             int topK) throws IOException {
-        Query match = Query.of(query -> query.match(value -> value
-                .field("text").query(question)));
-        return search(match, currentVersionIds, topK);
+        return search(contentMatch(question), currentVersionIds, topK);
+    }
+
+    private static Query contentMatch(String question) {
+        return Query.of(query -> query.match(match -> match
+                .field(TEXT_FIELD).query(question)));
     }
 
     private List<RetrievalCandidate> search(Query contentQuery,
@@ -127,7 +138,7 @@ public class Bm25Retriever {
 
     private static Query languageBranch(String text, DocumentLanguage language, float boost) {
         return Query.of(query -> query.bool(bool -> bool
-                .must(must -> must.match(match -> match.field("text").query(text)))
+                .must(contentMatch(text))
                 .filter(terms("metadata.language", List.of(language.value())))
                 .boost(boost)));
     }

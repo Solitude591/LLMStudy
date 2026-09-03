@@ -77,6 +77,8 @@ def generate(base_url: str, query: str, timeout: float = 300.0) -> dict:
     return {
         "response": str(response),
         "retrieved_contexts": [str(c) for c in chunks],
+        **({"retrieval_diagnostics": data["retrievalDiagnostics"]}
+           if isinstance(data.get("retrievalDiagnostics"), dict) else {}),
     }
 
 

@@ -6,6 +6,13 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Properties;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -16,6 +23,7 @@ public final class DocumentMentionMatcher {
     private static final Pattern PDF_SUFFIX = Pattern.compile("(?i)\\.pdf$");
     private static final Pattern LAYOUT_SUFFIX = Pattern.compile(
             "(?i)^(?:单栏|双栏|single[-_ ]?column|double[-_ ]?column)$");
+    private static final Properties KNOWN_ALIASES = loadAliases();
 
     private DocumentMentionMatcher() {
     }
@@ -29,18 +37,9 @@ public final class DocumentMentionMatcher {
         if (question == null || question.isBlank() || documents == null) {
             return List.of();
         }
-        List<DocumentAlias> aliases = documents.stream()
-                .filter(document -> document != null
-                        && document.getCurrentVersionId() != null
-                        && !document.getCurrentVersionId().isBlank())
-                .map(document -> new DocumentAlias(
-                        alias(document.getDocTitle()), document.getCurrentVersionId()))
-                .filter(alias -> alias.name().replaceAll("[-_\\s]", "").length() >= 4)
-                .sorted(Comparator.comparingInt(
-                        (DocumentAlias alias) -> alias.name().length()).reversed())
-                .toList();
+        List<DocumentAlias> aliases = documentAliases(documents);
         String remaining = question;
-        List<String> versions = new ArrayList<>();
+        LinkedHashSet<String> versions = new LinkedHashSet<>();
         for (DocumentAlias alias : aliases) {
             Matcher matcher = pattern(alias.name()).matcher(remaining);
             if (matcher.find()) {
@@ -51,6 +50,36 @@ public final class DocumentMentionMatcher {
         return List.copyOf(versions);
     }
 
+    private static List<DocumentAlias> documentAliases(List<KnowledgeDocument> documents) {
+        Map<String, LinkedHashSet<String>> versionsByAlias = new LinkedHashMap<>();
+        documents.stream()
+                .filter(document -> document != null
+                        && document.getCurrentVersionId() != null
+                        && !document.getCurrentVersionId().isBlank())
+                .forEach(document -> {
+                    String primary = alias(document.getDocTitle());
+                    List<String> names = new ArrayList<>(List.of(primary));
+                    String extra = KNOWN_ALIASES.getProperty(normalizedAlias(primary), "");
+                    if (!extra.isBlank()) {
+                        names.addAll(List.of(extra.split(",")));
+                    }
+                    for (String name : names) {
+                        if (normalizedAlias(name).length() >= 3) {
+                            versionsByAlias.computeIfAbsent(name.toLowerCase(Locale.ROOT),
+                                            key -> new LinkedHashSet<>())
+                                    .add(document.getCurrentVersionId());
+                        }
+                    }
+                });
+        // A name shared by different documents is ambiguous: never choose one arbitrarily.
+        return versionsByAlias.entrySet().stream()
+                .filter(entry -> entry.getValue().size() == 1)
+                .map(entry -> new DocumentAlias(entry.getKey(), entry.getValue().iterator().next()))
+                .sorted(Comparator.comparingInt(
+                        (DocumentAlias alias) -> alias.name().length()).reversed())
+                .toList();
+    }
+
     /** 删除显式文档名，供已按版本过滤的补充检索突出真正的问题主题。 */
     public static String withoutDocumentMentions(
             String query, List<KnowledgeDocument> documents) {
@@ -58,11 +87,8 @@ public final class DocumentMentionMatcher {
             return query;
         }
         String focused = query;
-        List<String> aliases = documents.stream()
-                .filter(document -> document != null)
-                .map(document -> alias(document.getDocTitle()))
-                .filter(name -> name.replaceAll("[-_\\s]", "").length() >= 4)
-                .sorted(Comparator.comparingInt(String::length).reversed())
+        List<String> aliases = documentAliases(documents).stream()
+                .map(DocumentAlias::name)
                 .toList();
         for (String alias : aliases) {
             focused = pattern(alias).matcher(focused).replaceAll(" ");
@@ -99,8 +125,27 @@ public final class DocumentMentionMatcher {
             }
             body.append(Pattern.quote(term.toLowerCase(Locale.ROOT)));
         }
-        return Pattern.compile("(?iu)(?<![\\p{L}\\p{N}])" + body
-                + "(?![\\p{L}\\p{N}])");
+        // Chinese prose need not contain spaces around an English model name.
+        // Keep Latin/digit/hyphen boundaries so RAG != RAGAS and SAM != SAM-Med2D.
+        return Pattern.compile("(?iu)(?<![\\p{IsLatin}\\p{N}_-])" + body
+                + "(?![\\p{IsLatin}\\p{N}_-])");
+    }
+
+    private static String normalizedAlias(String value) {
+        return value.replaceAll("[-_\\s]", "").toLowerCase(Locale.ROOT);
+    }
+
+    private static Properties loadAliases() {
+        Properties aliases = new Properties();
+        try (var stream = DocumentMentionMatcher.class.getResourceAsStream(
+                "/rag/document-aliases.properties")) {
+            if (stream != null) {
+                aliases.load(new InputStreamReader(stream, StandardCharsets.UTF_8));
+            }
+            return aliases;
+        } catch (IOException error) {
+            throw new IllegalStateException("Cannot load document aliases", error);
+        }
     }
 
     private record DocumentAlias(String name, String versionId) {

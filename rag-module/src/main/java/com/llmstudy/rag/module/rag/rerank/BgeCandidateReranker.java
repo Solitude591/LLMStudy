@@ -126,21 +126,18 @@ public class BgeCandidateReranker implements CandidateReranker {
                 + "UNKNOWN: " + bilingual(plan);
     }
 
-    /** 章节路径为空时只送 child 正文；否则只拼 header_path 最后一个 ` > ` 分段。 */
+    /**
+     * 章节路径为空时只送 child 正文；否则拼完整 header_path。
+     *
+     * <p>只送末级标题会丢掉论文名和上级章节，跨论文问题里两篇文章的「实验设置」
+     * 在 ReRanker 眼中完全一样。完整路径同时提供论文身份和章节层级，
+     * 长度只有百字量级，不会挤掉正文。</p>
+     */
     private static TextSegment document(RetrievalCandidate candidate) {
         Object header = candidate.metadata().get(SegmentMetadataKeys.HEADER_PATH);
-        String last = lastHeader(header == null ? "" : header.toString());
-        String body = last.isEmpty() ? candidate.text() : last + "\n" + candidate.text();
+        String path = header == null ? "" : header.toString().trim();
+        String body = path.isEmpty() ? candidate.text() : path + "\n" + candidate.text();
         return TextSegment.from(body);
-    }
-
-    static String lastHeader(String path) {
-        if (path == null || path.isBlank()) {
-            return "";
-        }
-        String trimmed = path.trim();
-        int idx = trimmed.lastIndexOf(" > ");
-        return idx < 0 ? trimmed : trimmed.substring(idx + 3).trim();
     }
 
     private static long elapsedMs(long startedNanos) {

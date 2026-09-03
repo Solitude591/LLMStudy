@@ -74,7 +74,7 @@ class BgeCandidateRerankerTest {
     }
 
     @Test
-    void usesLanguageSpecificQueriesAndLastHeaderOnly() {
+    void usesLanguageSpecificQueriesAndFullHeaderPath() {
         BgeScoringModel model = mock(BgeScoringModel.class);
         when(model.scorePairs(anyList(), anyList()))
                 .thenReturn(Response.from(List.of(0.9, 0.8, 0.7)));
@@ -95,9 +95,10 @@ class BgeCandidateRerankerTest {
         assertEquals("English question", queryCaptor.getValue().get(1));
         assertTrue(queryCaptor.getValue().get(2).contains("中文查询:"));
         assertTrue(queryCaptor.getValue().get(2).contains("English query:"));
-        assertEquals("3.3 Comparison\n38.96M 0.94M", docCaptor.getValue().get(0).text());
-        assertEquals("Results\nparams", docCaptor.getValue().get(1).text());
-        assertEquals("C\nmixed", docCaptor.getValue().get(2).text());
+        // 完整路径带上论文名和上级章节，跨论文题里两篇的「Results」才区分得开。
+        assertEquals("论文 > 3.3 Comparison\n38.96M 0.94M", docCaptor.getValue().get(0).text());
+        assertEquals("Paper > Results\nparams", docCaptor.getValue().get(1).text());
+        assertEquals("A > B > C\nmixed", docCaptor.getValue().get(2).text());
     }
 
     @Test

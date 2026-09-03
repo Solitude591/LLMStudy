@@ -51,7 +51,9 @@ public class RrfRerankAggregator {
             fusionCount = Math.max(fusionCount, QueryPageHint.FUSION_CANDIDATE_COUNT);
         }
         List<RetrievalCandidate> rrf = QueryPageHint.promote(
-                fusion.fuse(result.successful(), fusionCount, properties.getRrfK()),
+                fusion.fuse(result.successful(), result.laneWeights(
+                                properties.getExpansionLaneWeight()),
+                        fusionCount, properties.getRrfK()),
                 hintedPages);
         List<RetrievalCandidate> grouped = group(rrf, properties.getRerankCandidateCount());
         long rrfParentGroupingElapsedMs = elapsedMs(groupingStarted);
